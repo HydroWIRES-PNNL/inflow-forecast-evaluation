@@ -1,0 +1,1245 @@
+---
+title: "GRH Forecast Evaluation"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: sandstone
+    collapsed: true
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+
+library(tidyverse)
+suppressMessages(import::from(hydroGOF, gof, NSE, KGE, me, mse, pbias, nrmse, rPearson, rSD, mNSE))
+import::from(kableExtra, kbl, kable_minimal, kable_styling)
+```
+
+Report created: `r now()`
+
+## Metric Descriptions
+
+- *NSE* -  Nash-Sutcliffe Efficiency, a metric that measures performance relative to the mean of the data, values range from [-∞ , 1], with values greater than 0 indicating better performance than the mean, and a perfect forecast will have a value of 1. 
+- *KGE* - Kling-Gupta Efficiency, a metric that is often used similarly to NSE, but addresses several shortcomings by explicitly incorporating variability and correlation between simulations and observations. Values can range from [-∞ , 1] with negative values generally considered to indicate poor performance. 
+- *PBIAS* - Percent Bias, Bias of the simulation relative to the observations, represented as a percent. Negative values indicate a low bias and positive values indicate a high bias, values closer to 0 are preferable. 
+- *nRMSE* - Normalized root mean square error, expressed as a percent, lower values are better. 
+- *r* - Pearson's correlation, a measure of how well the forecast and observations are correlated, values closer to 1 indicate better correlation. 
+- *rSD* - Ratio of standard deviations of forecast and observed. Values close to 1 are preferable as they indicate that the forecast has the same variability as the observations. 
+
+
+```{r, include=FALSE}
+forecasts_0h <- read_csv("processed-data/forecasts_00h.csv", show = F, progress = F)
+forecasts_6h <- read_csv("processed-data/forecasts_06h.csv", show = F, progress = F)
+forecasts_12h <- read_csv("processed-data/forecasts_12h.csv", show = F, progress = F)
+forecasts_24h <- read_csv("processed-data/forecasts_24h.csv", show = F, progress = F)
+# added by Y.Son
+target <- read_csv("processed-data/targets_24h.csv", show = F, progress = F) |>
+  add_column(
+    source = "GRH"
+  ) |>
+  rename(
+    wilder_fc = wilder_tgt,
+    bellows_fc = bellows_tgt,
+    vernon_fc = vernon_tgt,
+    white_fc = white_tgt,
+    ottauquechee_fc = ottauquechee_tgt,
+    sugar_fc = sugar_tgt
+  )
+forecasts_24h <- forecasts_24h |>
+  bind_rows(target)
+
+now <- now()
+
+forecasts <- forecasts_24h |>
+  mutate(source = case_when(
+    source == "A" ~ "A",
+    source == "B" ~ "B",
+    source == "GRH" ~ "GRH",
+    .default = NA
+  )) |>
+  filter(
+    issue_time >= ISOdate(2023, 6, 1, tz = "US/Eastern"),
+    issue_time <= ISOdate(year(now), month(floor_date(now, "month")), 1, tz = "US/Eastern"),
+  ) |>
+  mutate(
+    season = case_when(
+      month(issue_time) %in% c(12, 1, 2) ~ "winter",
+      month(issue_time) %in% 3:5 ~ "spring",
+      month(issue_time) %in% 6:8 ~ "summer",
+      month(issue_time) %in% 9:11 ~ "fall"
+    )
+  )
+
+cols <- c("#9FBB73", "#F3B664", "#c44900", "#2C4E80", "#4793AF")
+
+hourly <-
+  forecasts |>
+  group_by(issue_time) |>
+  pivot_longer(-c(valid_time, issue_time, source, season),
+    names_sep = "_", names_to = c("location", "type")
+  ) |>
+  mutate(location = factor(location,
+    levels = c("wilder", "bellows", "vernon", "ottauquechee", "sugar", "white")
+  )) |>
+  mutate(lead_time = difftime(valid_time, issue_time, units = "hours") |> as.numeric()) |>
+  pivot_wider(id_cols = c(valid_time, issue_time, source, location, lead_time, season), names_from = type) |>
+  na.omit() |>
+  mutate(error = fc - obs) %>%
+  bind_rows(. |>
+    filter(source == "B") |>
+    mutate(
+      source = "perfect",
+      fc = obs,
+      error = fc - obs
+    )) %>%
+  bind_rows(. |>
+    filter(source == "B") |>
+    group_by(location, issue_time) |>
+    mutate(
+      source = "persistance",
+      fc = obsprev[1],
+      error = fc - obs
+    ))
+
+forecasts |>
+  distinct(valid_time, source, .keep_all = T) |>
+  select(-issue_time, -season) |>
+  pivot_longer(-c(valid_time, source),
+    names_sep = "_", names_to = c("location", "type")
+  ) |>
+  mutate(valid_date = floor_date(valid_time, "day")) |>
+  select(-valid_time) |>
+  group_by(valid_date, location, type) |>
+  mutate(
+    location = factor(location,
+      levels = c("wilder", "bellows", "vernon", "ottauquechee", "sugar", "white")
+    )
+  ) |>
+  group_by(valid_date, source, location, type) |>
+  summarise(value = mean(value), .groups = "drop") |>
+  pivot_wider(id_cols = c(valid_date, source, location), names_from = type) |>
+  mutate(obsprev = lag(obs)) |>
+  select(-fc, -obs) |>
+  na.omit() ->
+obs_prev_day
+
+daily <-
+  forecasts |>
+  group_by(issue_time) |>
+  mutate(valid_date = floor_date(valid_time, "day")) |>
+  pivot_longer(-c(valid_time, issue_time, source, valid_date, season),
+    names_sep = "_", names_to = c("location", "type")
+  ) |>
+  mutate(
+    location = factor(location,
+      levels = c("wilder", "bellows", "vernon", "ottauquechee", "sugar", "white")
+    )
+  ) |>
+  group_by(valid_date, issue_time, source, location, type, season) |>
+  summarise(value = mean(value), .groups = "drop") |>
+  mutate(lead_time = difftime(valid_date, issue_time, units = "hours") |> as.numeric()) |>
+  left_join(obs_prev_day, by = join_by(valid_date, source, location)) |>
+  mutate(value = ifelse(type == "obsprev", obsprev, value)) |>
+  select(-obsprev) |>
+  pivot_wider(id_cols = c(valid_date, issue_time, source, location, lead_time, season), names_from = type) |>
+  na.omit() |>
+  mutate(error = fc - obs) %>%
+  bind_rows(
+    . |>
+      filter(source == "B") |>
+      mutate(
+        source = "perfect",
+        fc = obs,
+        error = fc - obs
+      )
+  ) %>%
+  bind_rows(
+    . |>
+      filter(source == "B") |>
+      group_by(location, issue_time) |>
+      mutate(
+        source = "persistance",
+        fc = obsprev[1],
+        error = fc - obs
+      )
+  )
+
+
+n_day_ahead <- function(x, n) {
+  x |> filter(lead_time <= n * 24, lead_time > (n - 1) * 24)
+}
+
+# revised by Y.Son
+#day1_ave_forecasts <- daily |> n_day_ahead(1)
+#day2_ave_forecasts <- daily |> n_day_ahead(2)
+#day3_ave_forecasts <- daily |> n_day_ahead(3)
+daily_offset_grh <- daily |> mutate(lead_time = ifelse(source == 'GRH', lead_time + 23, lead_time))
+day1_ave_forecasts <- daily_offset_grh |> n_day_ahead(1)
+day2_ave_forecasts <- daily_offset_grh |> n_day_ahead(2)
+day3_ave_forecasts <- daily_offset_grh |> n_day_ahead(3)
+
+fc_stats <- function(x) {
+  x |>
+    group_by(source, location, lead_time) |>
+    mutate(n = n()) |>
+    filter(n > 1) |>
+    summarise(
+      NSE = NSE(fc, obs),
+      KGE = KGE(fc, obs),
+      PBIAS = pbias(fc, obs),
+      nRMSE = nrmse(fc, obs),
+      r = rPearson(fc, obs),
+      rSD = rSD(fc, obs),
+      .groups = "drop"
+    )
+}
+
+fc_stats_by_subgroup <- function(x, subgroup) {
+  x |>
+    mutate(month = month(issue_time)) |>
+    group_by(source, location, lead_time, !!as.name(subgroup)) |>
+    mutate(n = n()) |>
+    filter(n > 1) |>
+    summarise(
+      NSE = NSE(fc, obs),
+      KGE = KGE(fc, obs),
+      PBIAS = pbias(fc, obs),
+      nRMSE = nrmse(fc, obs),
+      r = rPearson(fc, obs),
+      rSD = rSD(fc, obs),
+      .groups = "drop"
+    )
+}
+
+fc_stats_daily <- daily |> fc_stats()
+fc_stats_hourly <- hourly |> fc_stats()
+fc_stats_da <- day1_ave_forecasts |>
+  fc_stats() |>
+  filter(lead_time >= 20)
+
+fc_stats_da_season <- day1_ave_forecasts |>
+  fc_stats_by_subgroup("season") |>
+  filter(lead_time >= 20)
+
+fc_stats_daily_by_month <- daily |> fc_stats_by_subgroup("month")
+fc_stats_hourly_by_month <- hourly |> fc_stats_by_subgroup("month")
+fc_stats_da_by_month <- day1_ave_forecasts |>
+  fc_stats_by_subgroup("month") |>
+  filter(lead_time >= 20)
+
+fc_stats_daily_by_season <- daily |> fc_stats_by_subgroup("season")
+fc_stats_hourly_by_season <- hourly |> fc_stats_by_subgroup("season")
+```
+
+### Day Ahead Forecast Statistics {.tabset}
+#### Overall
+```{r}
+fc_stats_da |>
+  arrange(location, source) |>
+  select(-lead_time) |>
+  # filter(!(source %in% c('perfect','persistance'))) |>
+  kbl(digits = 3) |>
+  kable_styling("striped")
+```
+
+#### Winter 
+```{r}
+fc_stats_da_season |>
+  filter(season == "winter") |>
+  arrange(location, source) |>
+  select(-lead_time) |>
+  kbl(digits = 3) |>
+  kable_styling("striped")
+```
+
+#### Spring 
+```{r}
+fc_stats_da_season |>
+  filter(season == "spring") |>
+  arrange(location, source) |>
+  select(-lead_time) |>
+  kbl(digits = 3) |>
+  kable_styling("striped")
+```
+
+#### Summer 
+```{r}
+fc_stats_da_season |>
+  filter(season == "summer") |>
+  arrange(location, source) |>
+  select(-lead_time) |>
+  kbl(digits = 3) |>
+  kable_styling("striped")
+```
+
+#### Fall 
+```{r}
+fc_stats_da_season |>
+  filter(season == "fall") |>
+  arrange(location, source) |>
+  select(-lead_time) |>
+  kbl(digits = 3) |>
+  kable_styling("striped")
+```
+
+### Error Distributions (Forecast - Observed) {.tabset}
+```{r}
+plot_error_boxplots <- function(fc) {
+  fc |>
+    group_by(source, location) |>
+    filter(error < quantile(error, 0.95), error > quantile(error, 0.05)) |>
+    bind_rows(fc |> filter(source == "perfect")) |>
+    ggplot() +
+    geom_hline(yintercept = 0) +
+    geom_boxplot(aes(source, error, fill = source)) +
+    facet_wrap(~location, scales = "free") +
+    scale_fill_manual(values = cols) +
+    theme_bw() +
+    theme(
+      legend.position = "none",
+      axis.text.x = element_text(angle = 20, hjust = 1)
+    ) +
+    labs(y = "Daily Average Flow Error [cfs]", x = "Forecast Source")
+}
+```
+
+#### Overall 
+```{r}
+day1_ave_forecasts |> plot_error_boxplots()
+```
+
+#### Winter 
+```{r}
+day1_ave_forecasts |>
+  filter(season == "winter") |>
+  plot_error_boxplots()
+```
+
+#### Spring 
+```{r}
+day1_ave_forecasts |>
+  filter(season == "spring") |>
+  plot_error_boxplots()
+```
+
+#### Summer 
+```{r}
+day1_ave_forecasts |>
+  filter(season == "summer") |>
+  plot_error_boxplots()
+```
+
+#### Fall 
+```{r}
+day1_ave_forecasts |>
+  filter(season == "fall") |>
+  plot_error_boxplots()
+```
+
+
+### Day Ahead Observed vs. Forecast Scatterplot {.tabset}
+```{r}
+plot_obs_vs_fc <- function(fc) {
+  fc |> ggplot() +
+    geom_point(aes(obs, fc, color = source)) +
+    geom_abline(slope = 1) +
+    theme_bw() +
+    facet_wrap(~source) +
+    scale_color_manual(values = cols) +
+    theme(legend.position = "none") +
+    coord_equal(xlim = c(0, 80000), ylim = c(0, 80000)) +
+    labs(y = "Forecast", x = "Observed")
+}
+```
+
+#### Overall 
+```{r}
+day1_ave_forecasts |> plot_obs_vs_fc()
+```
+
+#### Winter 
+```{r}
+day1_ave_forecasts |>
+  filter(season == "winter") |>
+  plot_obs_vs_fc()
+```
+
+#### Spring 
+```{r}
+day1_ave_forecasts |>
+  filter(season == "spring") |>
+  plot_obs_vs_fc()
+```
+
+#### Summer 
+```{r}
+day1_ave_forecasts |>
+  filter(season == "summer") |>
+  plot_obs_vs_fc()
+```
+
+#### Fall 
+```{r}
+day1_ave_forecasts |>
+  filter(season == "fall") |>
+  plot_obs_vs_fc()
+```
+
+### Day Ahead Performance by Month {.tabset}
+
+
+```{r}
+stat_by_month <- function(x, stat) {
+  x |>
+    mutate(plot_month = ISOdate(ifelse(month >= 6, 2000, 2001), month, 1)) |>
+    ggplot() +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_line(aes(plot_month, !!as.name(stat), color = source), size = 1) +
+    facet_wrap(~location) +
+    scale_x_datetime(date_breaks = "1 month", date_labels = "%b", minor_breaks = NULL) +
+    scale_color_manual("Forecast Source", values = cols) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90)) +
+    labs(x = "") +
+    theme(legend.position = "top")
+}
+```
+
+#### Kling-Gupta Efficiency (KGE)
+```{r}
+fc_stats_da_by_month |>
+  stat_by_month("KGE") + coord_cartesian(ylim = c(-1, 1))
+```
+
+#### Nash-Suttecliffe Efficiency (NSE)
+```{r}
+fc_stats_da_by_month |>
+  stat_by_month("NSE") + coord_cartesian(ylim = c(-1, 1))
+```
+
+#### Pearson's Correlation (r)
+```{r}
+fc_stats_da_by_month |>
+  stat_by_month("r") + coord_cartesian(ylim = c(0, 1))
+```
+
+#### Percent Bias
+```{r}
+fc_stats_da_by_month |>
+  stat_by_month("PBIAS") + coord_cartesian(ylim = c(-100, 100))
+```
+
+## Daily forecast performance vs lead time {.tabset}
+
+```{r}
+stat_plot_over_time <- function(x, stat) {
+  x |> ggplot() +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_line(aes(lead_time / 24, !!as.name(stat), color = source), size = 1) +
+    scale_x_continuous(breaks = 0:10, minor_breaks = NULL) +
+    facet_wrap(~location) +
+    theme_bw() +
+    scale_color_manual("Forecast Source", values = cols) +
+    # geom_vline(xintercept = 24) +
+    theme(legend.position = "top") +
+    labs(x = "Lead Time (days)")
+}
+```
+
+### Kling-Gupta Efficiency (KGE) {.tabset}
+
+#### Overall 
+```{r}
+fc_stats_daily |>
+  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+```
+
+#### Winter
+```{r}
+fc_stats_daily_by_season |>
+  filter(season == "winter") |>
+  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+```
+
+#### Spring
+```{r}
+fc_stats_daily_by_season |>
+  filter(season == "spring") |>
+  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+```
+
+#### Summer
+```{r}
+fc_stats_daily_by_season |>
+  filter(season == "summer") |>
+  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+```
+
+#### Fall
+```{r}
+fc_stats_daily_by_season |>
+  filter(season == "fall") |>
+  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+```
+
+### Nash-Suttecliffe Efficiency (NSE) {.tabset}
+
+#### Overall 
+```{r}
+fc_stats_daily |>
+  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-2, 1))
+```
+
+#### Winter
+```{r}
+fc_stats_daily_by_season |>
+  filter(season == "winter") |>
+  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-2, 1))
+```
+
+#### Spring
+```{r}
+fc_stats_daily_by_season |>
+  filter(season == "spring") |>
+  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-2, 1))
+```
+
+#### Summer
+```{r}
+fc_stats_daily_by_season |>
+  filter(season == "summer") |>
+  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-2, 1))
+```
+
+#### Fall
+```{r}
+fc_stats_daily_by_season |>
+  filter(season == "fall") |>
+  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-2, 1))
+```
+
+
+### Pearson's Correlation (r) {.tabset}
+
+#### Overall 
+```{r}
+fc_stats_daily |>
+  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+```
+
+#### Winter
+```{r}
+fc_stats_daily_by_season |>
+  filter(season == "winter") |>
+  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+```
+
+#### Spring
+```{r}
+fc_stats_daily_by_season |>
+  filter(season == "spring") |>
+  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+```
+
+#### Summer
+```{r}
+fc_stats_daily_by_season |>
+  filter(season == "summer") |>
+  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+```
+
+#### Fall
+```{r}
+fc_stats_daily_by_season |>
+  filter(season == "fall") |>
+  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+```
+
+
+### Percent Bias {.tabset}
+
+#### Overall 
+```{r}
+fc_stats_daily |>
+  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+```
+
+#### Winter 
+```{r}
+fc_stats_daily_by_season |>
+  filter(season == "winter") |>
+  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+```
+
+#### Spring 
+```{r}
+fc_stats_daily_by_season |>
+  filter(season == "spring") |>
+  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+```
+
+#### Summer 
+```{r}
+fc_stats_daily_by_season |>
+  filter(season == "summer") |>
+  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+```
+
+#### Fall 
+```{r}
+fc_stats_daily_by_season |>
+  filter(season == "fall") |>
+  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+```
+
+## Hourly forecast performance vs lead time {.tabset}
+
+### Kling-Gupta Efficiency (KGE) {.tabset}
+
+#### Overall 
+```{r}
+fc_stats_hourly |>
+  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+```
+
+#### Winter
+```{r}
+fc_stats_hourly_by_season |>
+  filter(season == "winter") |>
+  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+```
+
+#### Spring
+```{r}
+fc_stats_hourly_by_season |>
+  filter(season == "spring") |>
+  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+```
+
+#### Summer
+```{r}
+fc_stats_hourly_by_season |>
+  filter(season == "summer") |>
+  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+```
+
+#### Fall
+```{r}
+fc_stats_hourly_by_season |>
+  filter(season == "fall") |>
+  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+```
+### Nash-Suttecliffe Efficiency (NSE) {.tabset}
+
+#### Overall 
+```{r}
+fc_stats_hourly |>
+  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-1, 1))
+```
+
+#### Winter
+```{r}
+fc_stats_hourly_by_season |>
+  filter(season == "winter") |>
+  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-1, 1))
+```
+
+#### Spring
+```{r}
+fc_stats_hourly_by_season |>
+  filter(season == "spring") |>
+  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-1, 1))
+```
+
+#### Summer
+```{r}
+fc_stats_hourly_by_season |>
+  filter(season == "summer") |>
+  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-1, 1))
+```
+
+#### Fall
+```{r}
+fc_stats_hourly_by_season |>
+  filter(season == "fall") |>
+  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-1, 1))
+```
+
+### Pearson's Correlation (r) {.tabset}
+
+#### Overall 
+```{r}
+fc_stats_hourly |>
+  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+```
+
+#### Winter
+```{r}
+fc_stats_hourly_by_season |>
+  filter(season == "winter") |>
+  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+```
+
+#### Spring
+```{r}
+fc_stats_hourly_by_season |>
+  filter(season == "spring") |>
+  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+```
+
+#### Summer
+```{r}
+fc_stats_hourly_by_season |>
+  filter(season == "summer") |>
+  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+```
+
+#### Fall
+```{r}
+fc_stats_hourly_by_season |>
+  filter(season == "fall") |>
+  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+```
+
+
+### Percent Bias {.tabset}
+
+#### Overall 
+```{r}
+fc_stats_hourly |>
+  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+```
+
+#### Winter 
+```{r}
+fc_stats_hourly_by_season |>
+  filter(season == "winter") |>
+  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+```
+
+#### Spring 
+```{r}
+fc_stats_hourly_by_season |>
+  filter(season == "spring") |>
+  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+```
+
+#### Summer 
+```{r}
+fc_stats_hourly_by_season |>
+  filter(season == "summer") |>
+  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+```
+
+#### Fall 
+```{r}
+fc_stats_hourly_by_season |>
+  filter(season == "fall") |>
+  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+```
+
+## Cumulative Error {.tabset}
+```{r}
+threshold <- 15000
+threshold_elev <- 5 / 10
+hourly |>
+  group_by(location, valid_time, issue_time, source, lead_time) |>
+  summarise(
+    cum_error = cumsum(error),
+    dist_to_upper_thresh = pmin(pmax(threshold - cum_error, 0), 2 * threshold),
+    dist_to_lower_thresh = pmin(pmax(cum_error + threshold, 0), 2 * threshold),
+    dist_to_upper_thresh = (dist_to_upper_thresh - threshold) / dist_to_upper_thresh * 5 / 10,
+    dist_to_lower_thresh = (dist_to_lower_thresh - threshold) / dist_to_lower_thresh * 5 / 10,
+    dist_to_nearest_thresh = pmin(dist_to_upper_thresh, dist_to_lower_thresh),
+    .groups = "drop",
+  ) ->
+cum_error_raw
+
+hourly |>
+  group_by(location, valid_time, issue_time, source, lead_time, season) |>
+  summarise(
+    cum_error = cumsum(error),
+    dist_to_upper_thresh = pmin(pmax(threshold - cum_error, 0), 2 * threshold),
+    dist_to_lower_thresh = pmin(pmax(cum_error + threshold, 0), 2 * threshold),
+    dist_to_upper_thresh = (dist_to_upper_thresh - threshold) / dist_to_upper_thresh * 5 / 10,
+    dist_to_lower_thresh = (dist_to_lower_thresh - threshold) / dist_to_lower_thresh * 5 / 10,
+    dist_to_nearest_thresh = pmin(dist_to_upper_thresh, dist_to_lower_thresh),
+    .groups = "drop",
+  ) ->
+cum_error_raw_seasonal
+
+cum_error_raw |>
+  group_by(location, issue_time, source) |>
+  mutate(cum_error = cum_error + cum_error[25]) |>
+  group_by(location, lead_time, source) |>
+  summarise(
+    p_bust = length(which(cum_error > threshold | cum_error < -threshold)) / length(cum_error),
+    .groups = "drop"
+  ) |>
+  filter(location %in% c("wilder", "vernon", "bellows")) |>
+  mutate(location = factor(location, c("wilder", "bellows", "vernon"))) ->
+cum_error_starting_from_second_day
+
+cum_error_raw_seasonal |>
+  group_by(location, issue_time, source, season) |>
+  mutate(cum_error = cum_error + cum_error[25]) |>
+  group_by(location, lead_time, source, season) |>
+  summarise(
+    p_bust = length(which(cum_error > threshold | cum_error < -threshold)) / length(cum_error),
+    .groups = "drop"
+  ) |>
+  filter(location %in% c("wilder", "vernon", "bellows")) |>
+  mutate(location = factor(location, c("wilder", "bellows", "vernon"))) ->
+cum_error_starting_from_second_day_seasonal
+
+cum_error_raw |>
+  group_by(location, lead_time, source) |>
+  summarise(
+    ave_cum_error = mean(cum_error),
+    q95_cum_error = quantile(cum_error, 0.975),
+    q75_cum_error = quantile(cum_error, 0.75),
+    q50_cum_error = quantile(cum_error, 0.50),
+    q25_cum_error = quantile(cum_error, 0.25),
+    q05_cum_error = quantile(cum_error, 0.025),
+    p_bust = length(which(cum_error > threshold | cum_error < -threshold)) / length(cum_error),
+    dist_to_upper_thresh_q95 = quantile(dist_to_upper_thresh, .975),
+    dist_to_upper_thresh_q75 = quantile(dist_to_upper_thresh, .75),
+    dist_to_upper_thresh_q50 = quantile(dist_to_upper_thresh, .5),
+    dist_to_upper_thresh_q25 = quantile(dist_to_upper_thresh, .25),
+    dist_to_upper_thresh_q05 = quantile(dist_to_upper_thresh, .025),
+    dist_to_lower_thresh_q95 = quantile(dist_to_lower_thresh, .975),
+    dist_to_lower_thresh_q75 = quantile(dist_to_lower_thresh, .75),
+    dist_to_lower_thresh_q50 = quantile(dist_to_lower_thresh, .5),
+    dist_to_lower_thresh_q25 = quantile(dist_to_lower_thresh, .25),
+    dist_to_lower_thresh_q05 = quantile(dist_to_lower_thresh, .025),
+    dist_to_nearest_thresh_q95 = quantile(dist_to_nearest_thresh, .975),
+    dist_to_nearest_thresh_q75 = quantile(dist_to_nearest_thresh, .75),
+    dist_to_nearest_thresh_q50 = quantile(dist_to_nearest_thresh, .5),
+    dist_to_nearest_thresh_q25 = quantile(dist_to_nearest_thresh, .25),
+    dist_to_nearest_thresh_q05 = quantile(dist_to_nearest_thresh, .025),
+    .groups = "drop"
+  ) |>
+  filter(location %in% c("wilder", "vernon", "bellows")) ->
+cum_error
+
+cum_error_raw_seasonal |>
+  group_by(location, lead_time, source, season) |>
+  summarise(
+    ave_cum_error = mean(cum_error),
+    q95_cum_error = quantile(cum_error, 0.975),
+    q75_cum_error = quantile(cum_error, 0.75),
+    q50_cum_error = quantile(cum_error, 0.50),
+    q25_cum_error = quantile(cum_error, 0.25),
+    q05_cum_error = quantile(cum_error, 0.025),
+    p_bust = length(which(cum_error > threshold | cum_error < -threshold)) / length(cum_error),
+    dist_to_upper_thresh_q95 = quantile(dist_to_upper_thresh, .975),
+    dist_to_upper_thresh_q75 = quantile(dist_to_upper_thresh, .75),
+    dist_to_upper_thresh_q50 = quantile(dist_to_upper_thresh, .5),
+    dist_to_upper_thresh_q25 = quantile(dist_to_upper_thresh, .25),
+    dist_to_upper_thresh_q05 = quantile(dist_to_upper_thresh, .025),
+    dist_to_lower_thresh_q95 = quantile(dist_to_lower_thresh, .975),
+    dist_to_lower_thresh_q75 = quantile(dist_to_lower_thresh, .75),
+    dist_to_lower_thresh_q50 = quantile(dist_to_lower_thresh, .5),
+    dist_to_lower_thresh_q25 = quantile(dist_to_lower_thresh, .25),
+    dist_to_lower_thresh_q05 = quantile(dist_to_lower_thresh, .025),
+    dist_to_nearest_thresh_q95 = quantile(dist_to_nearest_thresh, .975),
+    dist_to_nearest_thresh_q75 = quantile(dist_to_nearest_thresh, .75),
+    dist_to_nearest_thresh_q50 = quantile(dist_to_nearest_thresh, .5),
+    dist_to_nearest_thresh_q25 = quantile(dist_to_nearest_thresh, .25),
+    dist_to_nearest_thresh_q05 = quantile(dist_to_nearest_thresh, .025),
+    .groups = "drop"
+  ) |>
+  filter(location %in% c("wilder", "vernon", "bellows")) ->
+cum_error_seasonal
+```
+
+### 2.5th to 97.5th percentile (Middle 95%) {.tabset}
+```{r}
+cum_error_plot <- function(error, threshold = threshold_elev, scale = 30000) {
+  ggplot(error) +
+    geom_hline(yintercept = c(-threshold, threshold), linetype = "dashed") +
+    geom_errorbar(aes(lead_time / 24,
+      y = q50_cum_error / scale,
+      ymin = q05_cum_error / scale, ymax = q95_cum_error / scale, color = source
+    )) +
+    geom_point(aes(lead_time / 24, y = q50_cum_error / scale, color = source)) +
+    scale_color_manual("Forecast Source", values = cols) +
+    scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
+    scale_y_continuous(breaks = seq(-threshold * 1.2, threshold * 1.2, len = 7)) +
+    coord_cartesian(ylim = c(-threshold * 1.2, threshold * 1.2)) +
+    facet_grid(source ~ location) +
+    theme_bw() +
+    theme(
+      legend.position = "top",
+      panel.grid.minor = element_blank()
+    ) +
+    labs(
+      x = "Lead Time (days)",
+      y = "Cumulative Error (ft)"
+    )
+}
+```
+
+#### Overall
+```{r, fig.height=8}
+cum_error |>
+  cum_error_plot()
+```
+
+
+#### Winter
+```{r, fig.height=8}
+cum_error_seasonal |>
+  filter(season == "winter") |>
+  cum_error_plot()
+```
+
+#### Spring
+```{r, fig.height=8}
+cum_error_seasonal |>
+  filter(season == "spring") |>
+  cum_error_plot()
+```
+
+#### Summer
+```{r, fig.height=8}
+cum_error_seasonal |>
+  filter(season == "summer") |>
+  cum_error_plot()
+```
+
+#### Fall
+```{r, fig.height=8}
+cum_error_seasonal |>
+  filter(season == "fall") |>
+  cum_error_plot()
+```
+
+### 25th to 75th percentile (Middle 50%) {.tabset}
+```{r}
+cum_error_plot50 <- function(error, threshold = threshold_elev, scale = 30000) {
+  ggplot(error) +
+    geom_hline(yintercept = c(-threshold, threshold), linetype = "dashed") +
+    geom_errorbar(aes(lead_time / 24,
+      y = q50_cum_error / scale,
+      ymin = q25_cum_error / scale, ymax = q75_cum_error / scale, color = source
+    )) +
+    geom_point(aes(lead_time / 24, y = q50_cum_error / scale, color = source)) +
+    scale_color_manual("Forecast Source", values = cols) +
+    scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
+    scale_y_continuous(breaks = seq(-threshold * 1.2, threshold * 1.2, len = 7)) +
+    coord_cartesian(ylim = c(-threshold * 1.2, threshold * 1.2)) +
+    facet_grid(source ~ location) +
+    theme_bw() +
+    theme(
+      legend.position = "top",
+      panel.grid.minor = element_blank()
+    ) +
+    labs(
+      x = "Lead Time (days)",
+      y = "Cumulative Error (ft)"
+    )
+}
+```
+
+#### Overall
+```{r, fig.height=8}
+cum_error |>
+  cum_error_plot50()
+```
+
+
+#### Winter
+```{r, fig.height=8}
+cum_error_seasonal |>
+  filter(season == "winter") |>
+  cum_error_plot50()
+```
+
+#### Spring
+```{r, fig.height=8}
+cum_error_seasonal |>
+  filter(season == "spring") |>
+  cum_error_plot50()
+```
+
+#### Summer
+```{r, fig.height=8}
+cum_error_seasonal |>
+  filter(season == "summer") |>
+  cum_error_plot50()
+```
+
+#### Fall
+```{r, fig.height=8}
+cum_error_seasonal |>
+  filter(season == "fall") |>
+  cum_error_plot50()
+```
+
+```{r}
+### 25th to 75th percentile (Middle 50%)
+# ggplot(cum_error) +
+#   geom_hline(yintercept = c(-threshold, threshold), linetype = "dashed") +
+#   # geom_hline(yintercept = c(threshold, -2*threshold), linetype = "dashed", color = "red") +
+#   geom_errorbar(aes(lead_time / 24, y = q50_cum_error, ymin = q25_cum_error, ymax = q75_cum_error, color = source)) +
+#   geom_point(aes(lead_time / 24, y = q50_cum_error, color = source)) +
+#   scale_color_manual("Forecast Source", values = cols) +
+#   scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
+#   coord_cartesian(ylim = c(-threshold, threshold)) +
+#   facet_grid(source ~ location) +
+#   theme_bw() +
+#   theme(legend.position = "top") +
+#   labs(
+#     x = "Lead Time (days)",
+#     y = "Cumulative Error (cfs)"
+#   )
+```
+
+## Probability of exceeding 0.5 ft cumulative error {.tabset}
+```{r}
+prob_bust_plot <- function(error) {
+  ggplot(error) +
+    geom_line(aes(lead_time / 24, y = p_bust, color = source), size = 1) +
+    scale_color_manual("Forecast Source", values = cols) +
+    scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
+    scale_y_continuous(limits = c(0, 0.15)) +
+    facet_grid(~location) +
+    theme_bw() +
+    theme(legend.position = "top") +
+    labs(
+      x = "Lead Time (days)",
+      y = "Exceedance probability"
+    )
+}
+```
+### Overall
+```{r}
+cum_error |>
+  prob_bust_plot()
+```
+
+
+### Winter
+```{r}
+cum_error_seasonal |>
+  filter(season == "winter") |>
+  prob_bust_plot()
+```
+
+### Spring
+```{r}
+cum_error_seasonal |>
+  filter(season == "spring") |>
+  prob_bust_plot()
+```
+
+### Summer
+```{r}
+cum_error_seasonal |>
+  filter(season == "summer") |>
+  prob_bust_plot()
+```
+
+### Fall
+```{r}
+cum_error_seasonal |>
+  filter(season == "fall") |>
+  prob_bust_plot()
+```
+
+
+## Probability of exceeding 0.5 ft cumulative error given second day starting position {.tabset}
+```{r}
+prob_bust_plot_second_day <- function(error_second_day) {
+  ggplot(error_second_day |> filter(lead_time > 1)) +
+    geom_line(aes(lead_time / 24, y = p_bust, color = source), linewidth = 1) +
+    scale_color_manual("Forecast Source", values = cols) +
+    scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
+    scale_y_continuous(limits = c(0, 0.4)) +
+    facet_grid(~location) +
+    theme_bw() +
+    theme(legend.position = "top") +
+    labs(
+      x = "Lead Time (days)",
+      y = "Exceedance probability"
+    )
+}
+```
+### Overall
+```{r}
+cum_error_starting_from_second_day |>
+  prob_bust_plot_second_day()
+```
+
+
+### Winter
+```{r}
+cum_error_starting_from_second_day_seasonal |>
+  filter(season == "winter") |>
+  prob_bust_plot_second_day()
+```
+
+### Spring
+```{r}
+cum_error_starting_from_second_day_seasonal |>
+  filter(season == "spring") |>
+  prob_bust_plot_second_day()
+```
+
+### Summer
+```{r}
+cum_error_starting_from_second_day_seasonal |>
+  filter(season == "summer") |>
+  prob_bust_plot_second_day()
+```
+
+### Fall
+```{r}
+cum_error_starting_from_second_day_seasonal |>
+  filter(season == "fall") |>
+  prob_bust_plot_second_day()
+```
+
+
+```{r}
+## Space remaining until upper threshold {.tabset}
+### 2.5th to 97.5th percentile (Middle 95%)
+# ggplot(cum_error |> filter(lead_time > 1)) +
+#   geom_hline(yintercept = c(-threshold_elev, threshold_elev), linetype = "dashed") +
+#   geom_errorbar(aes(lead_time / 24,
+#     y = dist_to_upper_thresh_q50,
+#     ymin = dist_to_upper_thresh_q05,
+#     ymax = dist_to_upper_thresh_q95, color = source
+#   )) +
+#   # geom_line(aes(lead_time / 24, y = dist_to_nearest_thresh_q50, color = source)) +
+#   geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q50, color = source)) +
+#   # geom_line(aes(lead_time / 24, y = dist_to_lower_thresh_q50, color = source)) +
+#   # geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q50, color = source)) +
+#   # geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q75, color = source)) +
+#   # geom_point(aes(lead_time / 24, y = dist_to_nearest_thresh_q25, color = source)) +
+#   # geom_point(aes(lead_time / 24, y = dist_to_nearest_thresh_q75, color = source)) +
+#   scale_color_manual("Forecast Source", values = cols) +
+#   scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
+#   coord_cartesian(ylim = c(-threshold_elev, threshold_elev)) +
+#   scale_y_continuous(
+#     # limits = c(-threshold_elev, threshold_elev),
+#     breaks = seq(-threshold_elev, threshold_elev, by = 0.1),
+#     minor_breaks = NULL
+#   ) +
+#   facet_grid(source ~ location) +
+#   theme_bw() +
+#   theme(legend.position = "top") +
+#   labs(
+#     x = "Lead Time (days)",
+#     y = "Cumulative Error (feet)"
+#   )
+```
+
+```{r}
+### 25th to 75th percentile (Middle 50%)
+# ggplot(cum_error |> filter(lead_time > 1)) +
+#   geom_hline(yintercept = c(-threshold_elev, threshold_elev), linetype = "dashed") +
+#   geom_errorbar(aes(lead_time / 24,
+#     y = dist_to_upper_thresh_q50,
+#     ymin = dist_to_upper_thresh_q25,
+#     ymax = dist_to_upper_thresh_q75,
+#     color = source
+#   )) +
+#   # geom_line(aes(lead_time / 24, y = dist_to_nearest_thresh_q50, color = source)) +
+#   geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q50, color = source)) +
+#   # geom_line(aes(lead_time / 24, y = dist_to_lower_thresh_q50, color = source)) +
+#   # geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q50, color = source)) +
+#   # geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q75, color = source)) +
+#   # geom_point(aes(lead_time / 24, y = dist_to_nearest_thresh_q25, color = source)) +
+#   # geom_point(aes(lead_time / 24, y = dist_to_nearest_thresh_q75, color = source)) +
+#   scale_color_manual("Forecast Source", values = cols) +
+#   scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
+#   scale_y_continuous(
+#     limits = c(-threshold_elev, threshold_elev),
+#     breaks = seq(-threshold_elev, threshold_elev, by = 0.1),
+#     minor_breaks = NULL
+#   ) +
+#   # coord_cartesian(ylim = c(-6000, 6000)) +
+#   facet_grid(source ~ location) +
+#   theme_bw() +
+#   theme(legend.position = "top") +
+#   labs(
+#     x = "Lead Time (days)",
+#     y = "Cumulative Error (feet)"
+# )
+```
+
+
+
+```{r}
+## Space remaining until lower threshold {.tabset}
+### 2.5th to 97.5th percentile (Middle 95%)
+# ggplot(cum_error |> filter(lead_time > 1)) +
+#   geom_hline(yintercept = c(-threshold_elev, threshold_elev), linetype = "dashed") +
+#   geom_errorbar(aes(lead_time / 24,
+#     y = dist_to_lower_thresh_q50,
+#     ymin = dist_to_lower_thresh_q05,
+#     ymax = dist_to_lower_thresh_q95, color = source
+#   )) +
+#   # geom_line(aes(lead_time / 24, y = dist_to_nearest_thresh_q50, color = source)) +
+#   geom_point(aes(lead_time / 24, y = dist_to_lower_thresh_q50, color = source)) +
+#   # geom_line(aes(lead_time / 24, y = dist_to_lower_thresh_q50, color = source)) +
+#   # geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q50, color = source)) +
+#   # geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q75, color = source)) +
+#   # geom_point(aes(lead_time / 24, y = dist_to_nearest_thresh_q25, color = source)) +
+#   # geom_point(aes(lead_time / 24, y = dist_to_nearest_thresh_q75, color = source)) +
+#   scale_color_manual("Forecast Source", values = cols) +
+#   scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
+#   coord_cartesian(ylim = c(-threshold_elev, threshold_elev)) +
+#   scale_y_continuous(
+#     # limits = c(-threshold_elev, threshold_elev),
+#     breaks = seq(-threshold_elev, threshold_elev, by = 0.1),
+#     minor_breaks = NULL
+#   ) +
+#   facet_grid(source ~ location) +
+#   theme_bw() +
+#   theme(legend.position = "top") +
+#   labs(
+#     x = "Lead Time (days)",
+#     y = "Cumulative Error (cfs)"
+#   )
+```
+
+
+```{r}
+### 25th to 75th percentile (Middle 50%)
+# ggplot(cum_error |> filter(lead_time > 1)) +
+#   geom_hline(yintercept = c(-threshold_elev, threshold_elev), linetype = "dashed") +
+#   geom_errorbar(aes(lead_time / 24,
+#     y = dist_to_lower_thresh_q50,
+#     ymin = dist_to_lower_thresh_q25,
+#     ymax = dist_to_lower_thresh_q75,
+#     color = source
+#   )) +
+#   # geom_line(aes(lead_time / 24, y = dist_to_nearest_thresh_q50, color = source)) +
+#   geom_point(aes(lead_time / 24, y = dist_to_lower_thresh_q50, color = source)) +
+#   # geom_line(aes(lead_time / 24, y = dist_to_lower_thresh_q50, color = source)) +
+#   # geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q50, color = source)) +
+#   # geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q75, color = source)) +
+#   # geom_point(aes(lead_time / 24, y = dist_to_nearest_thresh_q25, color = source)) +
+#   # geom_point(aes(lead_time / 24, y = dist_to_nearest_thresh_q75, color = source)) +
+#   scale_color_manual("Forecast Source", values = cols) +
+#   scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
+#   coord_cartesian(ylim = c(-threshold_elev, threshold_elev)) +
+#   scale_y_continuous(
+#     # limits = c(-threshold_elev, threshold_elev),
+#     breaks = seq(-threshold_elev, threshold_elev, by = 0.1),
+#     minor_breaks = NULL
+#   ) +
+#   facet_grid(source ~ location) +
+#   theme_bw() +
+#   theme(legend.position = "top") +
+#   labs(
+#     x = "Lead Time (days)",
+#     y = "Cumulative Error (cfs)"
+#   )
+```
