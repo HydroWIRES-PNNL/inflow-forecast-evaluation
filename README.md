@@ -6,18 +6,43 @@ A collection of scripts designed to evaluate real-time reservoir inflow forecast
 
 ## Code Descriptions
    * [evaluation.Rmd](./evaluation.Rmd): read anonymized inflow forecasts and processed observations to calculate evaluation metrics and generate an HTML dashboard
+   * [verify-all.R](./verify-all.R): reproduce the quantitative results reported in the paper, including Table 1, the skill scores, the smoothing sensitivity analysis, and the forebay exceedance probabilities
    * [exploratory-plots.R](./exploratory-plots.R): (optional) plot process observations compared to a series of inflow forecasts, outputting to ./plot/exploratory/
-   
+   * [paper/](./paper): the manuscript, as a git submodule
+
 ---
 ## Code Execution Steps
    1. Download anonymized and processed data from [Zenodo](https://zenodo.org/records/16921728) in [./processed-data](./processed-data/)
    2. Run `evaluation.Rmd` to evaluate inflow forecasts and generate visualizations
-   
+   3. Run `verify-all.R` to reproduce the numbers reported in the paper
+
+Cloning with the manuscript included:
+
+```bash
+git clone --recurse-submodules git@github.com:HydroWIRES-PNNL/inflow-forecast-evaluation.git
+```
+
+See [SYNC.md](./SYNC.md) for how the paper submodule relates to Overleaf.
+
+R dependencies: `tidyverse`, `hydroGOF`, `kableExtra`, `import`, `zoo`.
+
+---
+
+## Forecast product labels
+
+The two commercial forecast products are anonymized as **A** and **B** throughout this
+repository, the published dataset, and the paper. The in-house forecast is labelled **GRH**.
+Two benchmarks are derived in the code rather than supplied in the data: `perfect` (the
+observations used in place of a forecast) and `persistence` (the last observed value carried
+forward).
+
 ---
 
 ## Documentation
 For more details about the evaluation framework, please refer to the following publication:
-  - Bracken, C., Son, Y., Tidwell, V., and Voisin, N., A real-time reserervoir inflow forecast evaluation framework. (*in prep*)
+  - Bracken, C., Son, Y., Tidwell, V., and Voisin, N., A real-time reservoir inflow forecast evaluation framework. Submitted to the *Journal of the American Water Resources Association* (*in review*).
+
+A preprint is available at <https://eartharxiv.org/repository/view/10530/>.
 
 ---
 

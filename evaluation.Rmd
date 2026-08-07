@@ -11,7 +11,14 @@ editor_options:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+# All evaluation points present in the data.
+all_locs <- c("wilder", "bellows", "vernon", "ottauquechee", "sugar", "white")
+# Only these locations are included in the figures and tables. The three
+# tributaries are retained in the data because they contribute to the mainstem
+# inflows, but the three dams are what the evaluation reports on.
+locs <- c("wilder", "bellows", "vernon")
+
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, fig.width = 7, fig.height = 3)
 
 library(tidyverse)
 suppressMessages(import::from(hydroGOF, gof, NSE, KGE, me, mse, pbias, nrmse, rPearson, rSD, mNSE))
@@ -82,7 +89,7 @@ hourly <-
     names_sep = "_", names_to = c("location", "type")
   ) |>
   mutate(location = factor(location,
-    levels = c("wilder", "bellows", "vernon", "ottauquechee", "sugar", "white")
+    levels = all_locs
   )) |>
   mutate(lead_time = difftime(valid_time, issue_time, units = "hours") |> as.numeric()) |>
   pivot_wider(id_cols = c(valid_time, issue_time, source, location, lead_time, season), names_from = type) |>
@@ -99,10 +106,11 @@ hourly <-
     filter(source == "B") |>
     group_by(location, issue_time) |>
     mutate(
-      source = "persistance",
+      source = "persistence",
       fc = obsprev[1],
       error = fc - obs
-    ))
+    )) |>
+  filter(location %in% locs)
 
 forecasts |>
   distinct(valid_time, source, .keep_all = T) |>
@@ -115,7 +123,7 @@ forecasts |>
   group_by(valid_date, location, type) |>
   mutate(
     location = factor(location,
-      levels = c("wilder", "bellows", "vernon", "ottauquechee", "sugar", "white")
+      levels = all_locs
     )
   ) |>
   group_by(valid_date, source, location, type) |>
@@ -135,7 +143,7 @@ daily <-
   ) |>
   mutate(
     location = factor(location,
-      levels = c("wilder", "bellows", "vernon", "ottauquechee", "sugar", "white")
+      levels = all_locs
     )
   ) |>
   group_by(valid_date, issue_time, source, location, type, season) |>
@@ -161,11 +169,12 @@ daily <-
       filter(source == "B") |>
       group_by(location, issue_time) |>
       mutate(
-        source = "persistance",
+        source = "persistence",
         fc = obsprev[1],
         error = fc - obs
       )
-  )
+  ) |>
+  filter(location %in% locs)
 
 
 n_day_ahead <- function(x, n) {
@@ -240,7 +249,7 @@ fc_stats_hourly_by_season <- hourly |> fc_stats_by_subgroup("season")
 fc_stats_da |>
   arrange(location, source) |>
   select(-lead_time) |>
-  # filter(!(source %in% c('perfect','persistance'))) |>
+  # filter(!(source %in% c('perfect','persistence'))) |>
   kbl(digits = 3) |>
   kable_styling("striped")
 ```
@@ -396,7 +405,10 @@ stat_by_month <- function(x, stat) {
   x |>
     mutate(plot_month = ISOdate(ifelse(month >= 6, 2000, 2001), month, 1)) |>
     ggplot() +
-    geom_hline(yintercept = 0, linetype = "dashed") +
+    # The no-skill threshold differs by metric: using the mean of the
+    # observations as a predictor gives NSE = 0 but KGE = 1 - sqrt(2) ~ -0.41
+    # (Knoben et al., 2019), so the reference line must be metric-specific.
+    geom_hline(yintercept = ifelse(stat == "KGE", -0.41, 0), linetype = "dashed") +
     geom_line(aes(plot_month, !!as.name(stat), color = source), size = 1) +
     facet_wrap(~location) +
     scale_x_datetime(date_breaks = "1 month", date_labels = "%b", minor_breaks = NULL) +
@@ -411,7 +423,7 @@ stat_by_month <- function(x, stat) {
 #### Kling-Gupta Efficiency (KGE)
 ```{r}
 fc_stats_da_by_month |>
-  stat_by_month("KGE") + coord_cartesian(ylim = c(-1, 1))
+  stat_by_month("KGE") + coord_cartesian(ylim = c(-0.41, 1))
 ```
 
 #### Nash-Suttecliffe Efficiency (NSE)
@@ -454,7 +466,7 @@ stat_plot_over_time <- function(x, stat) {
 #### Overall 
 ```{r}
 fc_stats_daily |>
-  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-0.41, 1))
 ```
 
 #### Winter
@@ -1006,7 +1018,12 @@ prob_bust_plot <- function(error) {
     geom_line(aes(lead_time / 24, y = p_bust, color = source), size = 1) +
     scale_color_manual("Forecast Source", values = cols) +
     scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
-    scale_y_continuous(limits = c(0, 0.15)) +
+    # Deliberately unbounded on y. A scale_y_continuous(limits = ...) would
+    # silently DROP any exceedance probability above the cap rather than
+    # clipping the view, which for a compliance-risk metric is the wrong
+    # failure mode: the highest-risk cases are the ones that would vanish.
+    # The seasonal maximum currently sits just under 0.15, so a fixed cap
+    # there would be one re-run away from hiding data.
     facet_grid(~location) +
     theme_bw() +
     theme(legend.position = "top") +
@@ -1059,7 +1076,9 @@ prob_bust_plot_second_day <- function(error_second_day) {
     geom_line(aes(lead_time / 24, y = p_bust, color = source), linewidth = 1) +
     scale_color_manual("Forecast Source", values = cols) +
     scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
-    scale_y_continuous(limits = c(0, 0.4)) +
+    # Unbounded on y for the same reason as prob_bust_plot() above: a fixed
+    # cap would drop rather than clip the highest-risk cases. The seasonal
+    # maximum here is currently just under 0.40.
     facet_grid(~location) +
     theme_bw() +
     theme(legend.position = "top") +
