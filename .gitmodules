@@ -1,0 +1,3 @@
+[submodule "paper"]
+	path = paper
+	url = git@github.com:cameronbracken/GRH-Paper-JAWRA-2026.git

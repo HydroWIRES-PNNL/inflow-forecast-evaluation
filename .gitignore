@@ -1,3 +1,50 @@
-.DS_Store
-.Rhistory
+# data — published on Zenodo, not tracked here
+# https://doi.org/10.5281/zenodo.16921728
+data/
 processed-data/*.csv
+*.xlsx
+*.xlsm
+
+# R session state
+.RData
+.Rhistory
+.Rproj.user/
+
+# rendered outputs (regenerable from the Rmd)
+*.zip
+
+# secrets and environment
+.envrc
+.env
+
+# AI tooling
+CLAUDE.md
+AGENTS.md
+.claude/
+.codex/
+.cursor/
+.aider*
+
+# IDE
+.vscode/
+.positron/
+
+# OS
+.DS_Store
+._*
+.Trashes
+.Spotlight-V100
+.fseventsd
+Thumbs.db
+
+# LaTeX build artifacts (inside the paper submodule)
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.lot
+*.out
+*.synctex.gz
+*.toc
