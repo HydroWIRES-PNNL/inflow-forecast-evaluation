@@ -221,10 +221,45 @@ tab1 |>
 
 cat("\n\n########## 2. SKILL SCORES VS THE PERSISTENCE BENCHMARK ##########\n")
 
-# KGE skill score, as reported in Table 1 of the paper:
-#   KGE_SS = (KGE_f - KGE_ref) / (1 - KGE_ref),  reference = persistence
-# Computed from unrounded KGE so it matches the published column.
-cat("\n--- KGE skill score (Table 1 column KGE_SS) ---\n")
+# NSE skill score, as reported in Table 1 of the paper:
+#   NSE_SS = (NSE_f - NSE_ref) / (1 - NSE_ref),  reference = persistence
+# On a common sample this is identically 1 - MSE_f / MSE_ref, so the column is
+# computed that way: it avoids dividing by each product's own observed variance
+# and is recoverable from the RMSE column of Table 1 as 1 - (RMSE_f/RMSE_ref)^2.
+cat("\n--- NSE skill score (Table 1 column NSE_SS) ---\n")
+nse_ss <- tab1 |>
+  select(location, source, NSE, mse) |>
+  group_by(location) |>
+  mutate(mse_ref = mse[source == "persistence"]) |>
+  ungroup() |>
+  filter(source %in% c("A", "B", "GRH")) |>
+  mutate(ss = round(1 - mse / mse_ref, 2))
+nse_ss |>
+  select(location, source, ss) |>
+  pivot_wider(names_from = source, values_from = ss) |>
+  as.data.frame() |>
+  print()
+
+# Same quantity from the ratio-of-NSE form, as a check that the two agree. Small
+# differences arise only because each product covers a different set of days and
+# so a slightly different observed variance.
+cat("\n--- check: same score from (NSE_f - NSE_ref) / (1 - NSE_ref) ---\n")
+tab1 |>
+  select(location, source, NSE) |>
+  group_by(location) |>
+  mutate(nse_ref = NSE[source == "persistence"]) |>
+  ungroup() |>
+  filter(source %in% c("A", "B", "GRH")) |>
+  mutate(ss = round((NSE - nse_ref) / (1 - nse_ref), 2)) |>
+  select(location, source, ss) |>
+  pivot_wider(names_from = source, values_from = ss) |>
+  as.data.frame() |>
+  print()
+
+# The KGE skill score, kept for comparison. It is less severe on forecast A at
+# the most regulated site (0.47 at Vernon against 0.03 on the NSE version)
+# because KGE does not normalize by the observed variance in the same way.
+cat("\n--- KGE skill score, for comparison ---\n")
 tab1 |>
   select(location, source, KGE) |>
   group_by(location) |>
@@ -232,23 +267,6 @@ tab1 |>
   ungroup() |>
   filter(source %in% c("A", "B", "GRH")) |>
   mutate(ss = round((KGE - kge_ref) / (1 - kge_ref), 2)) |>
-  select(location, source, ss) |>
-  pivot_wider(names_from = source, values_from = ss) |>
-  as.data.frame() |>
-  print()
-
-# The equivalent skill score built on mean squared error. Reported alongside
-# because it weights large errors differently and gives a noticeably different
-# picture at the most regulated site: at Vernon forecast A scores 0.03 here
-# against 0.47 on the KGE version.
-cat("\n--- MSE skill score, for comparison ---\n")
-tab1 |>
-  select(location, source, mse) |>
-  group_by(location) |>
-  mutate(mse_p = mse[source == "persistence"]) |>
-  ungroup() |>
-  filter(source %in% c("A", "B", "GRH")) |>
-  mutate(ss = round(1 - mse / mse_p, 2)) |>
   select(location, source, ss) |>
   pivot_wider(names_from = source, values_from = ss) |>
   as.data.frame() |>
@@ -320,7 +338,7 @@ com |>
   as.data.frame() |>
   print()
 
-cat("\n--- common-period skill score vs persistence ---\n")
+cat("\n--- common-period NSE skill score vs persistence ---\n")
 com |>
   select(location, source, mse) |>
   group_by(location) |>
@@ -392,6 +410,22 @@ da24 |>
     .groups = "drop"
   ) |>
   arrange(source, desc(KGE)) |>
+  as.data.frame() |>
+  print()
+
+# Monthly values pooled across the three dams. The seasonal aggregation above is
+# what supports the claim that skill peaks in spring for all three products; the
+# monthly view is noisier and is reported because the text cites the January and
+# February values for forecast A.
+cat("\n--- pooled day-ahead metrics by month ---\n")
+da24 |>
+  filter(source %in% c("A", "B", "GRH")) |>
+  mutate(month = month(valid_date)) |>
+  group_by(source, month) |>
+  filter(n() > 2) |>
+  summarise(KGE = round(KGE(fc, obs), 2), NSE = round(NSE(fc, obs), 2), .groups = "drop") |>
+  pivot_wider(names_from = source, values_from = c(KGE, NSE)) |>
+  arrange(month) |>
   as.data.frame() |>
   print()
 
