@@ -757,55 +757,33 @@ fc_stats_hourly_by_season |>
 ```{r}
 threshold <- 15000
 threshold_elev <- 5 / 10
-hourly |>
-  group_by(location, valid_time, issue_time, source, lead_time) |>
-  summarise(
+cum_error_raw = hourly |>
+  filter(lead_time > 0) |>
+  arrange(location, source, issue_time, lead_time) |>
+  group_by(location, source, issue_time) |>
+  mutate(
     cum_error = cumsum(error),
     dist_to_upper_thresh = pmin(pmax(threshold - cum_error, 0), 2 * threshold),
     dist_to_lower_thresh = pmin(pmax(cum_error + threshold, 0), 2 * threshold),
     dist_to_upper_thresh = (dist_to_upper_thresh - threshold) / dist_to_upper_thresh * 5 / 10,
     dist_to_lower_thresh = (dist_to_lower_thresh - threshold) / dist_to_lower_thresh * 5 / 10,
-    dist_to_nearest_thresh = pmin(dist_to_upper_thresh, dist_to_lower_thresh),
-    .groups = "drop",
-  ) ->
-cum_error_raw
+    dist_to_nearest_thresh = pmin(dist_to_upper_thresh, dist_to_lower_thresh)
+  ) |>
+  ungroup()
 
-hourly |>
-  group_by(location, valid_time, issue_time, source, lead_time, season) |>
-  summarise(
+cum_error_raw_seasonal = hourly |>
+  filter(lead_time > 0) |>
+  arrange(location, source, issue_time, lead_time) |>
+  group_by(location, source, issue_time, season) |>
+  mutate(
     cum_error = cumsum(error),
     dist_to_upper_thresh = pmin(pmax(threshold - cum_error, 0), 2 * threshold),
     dist_to_lower_thresh = pmin(pmax(cum_error + threshold, 0), 2 * threshold),
     dist_to_upper_thresh = (dist_to_upper_thresh - threshold) / dist_to_upper_thresh * 5 / 10,
     dist_to_lower_thresh = (dist_to_lower_thresh - threshold) / dist_to_lower_thresh * 5 / 10,
-    dist_to_nearest_thresh = pmin(dist_to_upper_thresh, dist_to_lower_thresh),
-    .groups = "drop",
-  ) ->
-cum_error_raw_seasonal
-
-cum_error_raw |>
-  group_by(location, issue_time, source) |>
-  mutate(cum_error = cum_error + cum_error[25]) |>
-  group_by(location, lead_time, source) |>
-  summarise(
-    p_bust = length(which(cum_error > threshold | cum_error < -threshold)) / length(cum_error),
-    .groups = "drop"
+    dist_to_nearest_thresh = pmin(dist_to_upper_thresh, dist_to_lower_thresh)
   ) |>
-  filter(location %in% c("wilder", "vernon", "bellows")) |>
-  mutate(location = factor(location, c("wilder", "bellows", "vernon"))) ->
-cum_error_starting_from_second_day
-
-cum_error_raw_seasonal |>
-  group_by(location, issue_time, source, season) |>
-  mutate(cum_error = cum_error + cum_error[25]) |>
-  group_by(location, lead_time, source, season) |>
-  summarise(
-    p_bust = length(which(cum_error > threshold | cum_error < -threshold)) / length(cum_error),
-    .groups = "drop"
-  ) |>
-  filter(location %in% c("wilder", "vernon", "bellows")) |>
-  mutate(location = factor(location, c("wilder", "bellows", "vernon"))) ->
-cum_error_starting_from_second_day_seasonal
+  ungroup()
 
 cum_error_raw |>
   group_by(location, lead_time, source) |>
@@ -1018,12 +996,7 @@ prob_bust_plot <- function(error) {
     geom_line(aes(lead_time / 24, y = p_bust, color = source), size = 1) +
     scale_color_manual("Forecast Source", values = cols) +
     scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
-    # Deliberately unbounded on y. A scale_y_continuous(limits = ...) would
-    # silently DROP any exceedance probability above the cap rather than
-    # clipping the view, which for a compliance-risk metric is the wrong
-    # failure mode: the highest-risk cases are the ones that would vanish.
-    # The seasonal maximum currently sits just under 0.15, so a fixed cap
-    # there would be one re-run away from hiding data.
+    scale_y_continuous(labels = scales::label_percent()) +
     facet_grid(~location) +
     theme_bw() +
     theme(legend.position = "top") +
@@ -1066,61 +1039,6 @@ cum_error_seasonal |>
 cum_error_seasonal |>
   filter(season == "fall") |>
   prob_bust_plot()
-```
-
-
-## Probability of exceeding 0.5 ft cumulative error given second day starting position {.tabset}
-```{r}
-prob_bust_plot_second_day <- function(error_second_day) {
-  ggplot(error_second_day |> filter(lead_time > 1)) +
-    geom_line(aes(lead_time / 24, y = p_bust, color = source), linewidth = 1) +
-    scale_color_manual("Forecast Source", values = cols) +
-    scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
-    # Unbounded on y for the same reason as prob_bust_plot() above: a fixed
-    # cap would drop rather than clip the highest-risk cases. The seasonal
-    # maximum here is currently just under 0.40.
-    facet_grid(~location) +
-    theme_bw() +
-    theme(legend.position = "top") +
-    labs(
-      x = "Lead Time (days)",
-      y = "Exceedance probability"
-    )
-}
-```
-### Overall
-```{r}
-cum_error_starting_from_second_day |>
-  prob_bust_plot_second_day()
-```
-
-
-### Winter
-```{r}
-cum_error_starting_from_second_day_seasonal |>
-  filter(season == "winter") |>
-  prob_bust_plot_second_day()
-```
-
-### Spring
-```{r}
-cum_error_starting_from_second_day_seasonal |>
-  filter(season == "spring") |>
-  prob_bust_plot_second_day()
-```
-
-### Summer
-```{r}
-cum_error_starting_from_second_day_seasonal |>
-  filter(season == "summer") |>
-  prob_bust_plot_second_day()
-```
-
-### Fall
-```{r}
-cum_error_starting_from_second_day_seasonal |>
-  filter(season == "fall") |>
-  prob_bust_plot_second_day()
 ```
 
 

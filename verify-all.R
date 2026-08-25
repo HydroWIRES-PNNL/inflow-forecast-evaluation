@@ -9,7 +9,7 @@
 #
 # Sections:
 #    1  Day-ahead evaluation metrics (Table 1 of the paper)
-#    2  Skill score relative to the persistence benchmark
+#    2  Persistence benchmark values
 #    3  Evaluation period extent and per-product coverage
 #    4  Metrics restricted to the period common to all three products
 #    5  Sensitivity of the metrics to the smoothing window width
@@ -18,12 +18,6 @@
 #    8  Issue frequency and forecast horizon of each product
 #    9  Percent bias by lead time and location
 #   10  Forebay threshold exceedance probability
-#
-# Note on section 10: the exceedance calculation as published in evaluation.Rmd
-# groups by valid_time, so cumsum() operates on groups of size one and the
-# quantity obtained is the instantaneous hourly error rather than an
-# accumulation over lead time. This script reports that quantity alongside a
-# genuinely cumulative version so the difference between the two is explicit.
 #
 # The two commercial forecast products are anonymized as A and B, consistent
 # with the paper and the published dataset.
@@ -217,58 +211,13 @@ tab1 |>
   as.data.frame() |>
   print()
 
-# %% 2. Persistence skill score ------------------------------------------------
+# %% 2. Persistence benchmark --------------------------------------------------
 
-cat("\n\n########## 2. SKILL SCORES VS THE PERSISTENCE BENCHMARK ##########\n")
-
-# NSE skill score, as reported in Table 1 of the paper:
-#   NSE_SS = (NSE_f - NSE_ref) / (1 - NSE_ref),  reference = persistence
-# On a common sample this is identically 1 - MSE_f / MSE_ref, so the column is
-# computed that way: it avoids dividing by each product's own observed variance
-# and is recoverable from the RMSE column of Table 1 as 1 - (RMSE_f/RMSE_ref)^2.
-cat("\n--- NSE skill score (Table 1 column NSE_SS) ---\n")
-nse_ss <- tab1 |>
-  select(location, source, NSE, mse) |>
-  group_by(location) |>
-  mutate(mse_ref = mse[source == "persistence"]) |>
-  ungroup() |>
-  filter(source %in% c("A", "B", "GRH")) |>
-  mutate(ss = round(1 - mse / mse_ref, 2))
-nse_ss |>
-  select(location, source, ss) |>
-  pivot_wider(names_from = source, values_from = ss) |>
-  as.data.frame() |>
-  print()
-
-# Same quantity from the ratio-of-NSE form, as a check that the two agree. Small
-# differences arise only because each product covers a different set of days and
-# so a slightly different observed variance.
-cat("\n--- check: same score from (NSE_f - NSE_ref) / (1 - NSE_ref) ---\n")
+cat("\n\n########## 2. PERSISTENCE BENCHMARK VALUES ##########\n")
 tab1 |>
-  select(location, source, NSE) |>
-  group_by(location) |>
-  mutate(nse_ref = NSE[source == "persistence"]) |>
-  ungroup() |>
-  filter(source %in% c("A", "B", "GRH")) |>
-  mutate(ss = round((NSE - nse_ref) / (1 - nse_ref), 2)) |>
-  select(location, source, ss) |>
-  pivot_wider(names_from = source, values_from = ss) |>
-  as.data.frame() |>
-  print()
-
-# The KGE skill score, kept for comparison. It is less severe on forecast A at
-# the most regulated site (0.47 at Vernon against 0.03 on the NSE version)
-# because KGE does not normalize by the observed variance in the same way.
-cat("\n--- KGE skill score, for comparison ---\n")
-tab1 |>
-  select(location, source, KGE) |>
-  group_by(location) |>
-  mutate(kge_ref = KGE[source == "persistence"]) |>
-  ungroup() |>
-  filter(source %in% c("A", "B", "GRH")) |>
-  mutate(ss = round((KGE - kge_ref) / (1 - kge_ref), 2)) |>
-  select(location, source, ss) |>
-  pivot_wider(names_from = source, values_from = ss) |>
+  filter(source == "persistence") |>
+  mutate(across(c(NSE, KGE, r), \(x) round(x, 2)), RMSE = round(RMSE)) |>
+  select(location, source, NSE, KGE, RMSE, r) |>
   as.data.frame() |>
   print()
 
@@ -335,19 +284,6 @@ com <- da24 |>
 com |>
   arrange(location, source) |>
   select(-mse) |>
-  as.data.frame() |>
-  print()
-
-cat("\n--- common-period NSE skill score vs persistence ---\n")
-com |>
-  select(location, source, mse) |>
-  group_by(location) |>
-  mutate(mse_p = mse[source == "persistence"]) |>
-  ungroup() |>
-  filter(source %in% c("A", "B", "GRH")) |>
-  mutate(ss = round(1 - mse / mse_p, 2)) |>
-  select(location, source, ss) |>
-  pivot_wider(names_from = source, values_from = ss) |>
   as.data.frame() |>
   print()
 
@@ -554,8 +490,6 @@ fc24 |>
   print()
 
 # %% 10. Forebay exceedance ----------------------------------------------------
-# NOTE: reproduces the evaluation.Rmd calculation, then contrasts it with a
-# genuinely cumulative version. See the co-author note in the response.
 
 cat("\n\n########## 10. FOREBAY EXCEEDANCE ##########\n")
 threshold <- 15000
@@ -579,53 +513,24 @@ hourly <- fc24 |>
   mutate(error = fc - obs) |>
   filter(location %in% locs)
 
-# As published: cumsum() over groups of size one, so this is the instantaneous
-# hourly error, not an accumulation.
-as_published <- hourly |>
-  group_by(location, valid_time, issue_time, source, lead_time) |>
-  summarise(cum_error = cumsum(error), .groups = "drop")
-
-cat("group sizes in the published grouping (all 1 => cumsum is a no-op):\n")
-hourly |>
-  count(location, valid_time, issue_time, source, lead_time, name = "sz") |>
-  count(sz) |>
-  as.data.frame() |>
-  print()
-
-# Genuinely cumulative: integrate error over lead time within each issue.
-truly_cumulative <- hourly |>
+# Accumulate hourly forecast error over lead time within each forecast issue.
+cumulative <- hourly |>
+  filter(lead_time > 0) |>
   arrange(location, source, issue_time, lead_time) |>
   group_by(location, source, issue_time) |>
-  mutate(true_cum = cumsum(error)) |>
+  mutate(cum_error = cumsum(error)) |>
   ungroup()
 
-cat(
-  "\n--- P(exceed 0.5 ft), neutral start: as published vs truly cumulative ---\n"
-)
-truly_cumulative |>
-  filter(source %in% c("A", "B"), lead_time %in% c(24, 48, 72)) |>
+cat("\n--- P(exceed 0.5 ft), neutral forebay start ---\n")
+cumulative |>
+  filter(source %in% c("A", "B", "GRH"), lead_time %in% c(24, 48, 72)) |>
   group_by(location, source, lead_time) |>
   summarise(
-    p_published = round(100 * mean(abs(error) > threshold), 1),
-    p_cumulative = round(100 * mean(abs(true_cum) > threshold), 1),
+    p_exceed = round(100 * mean(abs(cum_error) > threshold), 1),
     .groups = "drop"
   ) |>
   mutate(day = lead_time / 24) |>
   select(-lead_time) |>
-  as.data.frame() |>
-  print()
-
-cat("\n--- P(exceed 0.5 ft), second day non-neutral start (as published) ---\n")
-as_published |>
-  group_by(location, issue_time, source) |>
-  mutate(cum_error = cum_error + cum_error[25]) |>
-  group_by(location, lead_time, source) |>
-  summarise(p = mean(abs(cum_error) > threshold), .groups = "drop") |>
-  filter(source %in% c("A", "B"), lead_time %in% c(24, 48, 72)) |>
-  mutate(p = round(100 * p, 1), day = lead_time / 24) |>
-  select(location, day, source, p) |>
-  pivot_wider(names_from = source, values_from = p) |>
-  arrange(location, day) |>
   as.data.frame() |>
   print()
 

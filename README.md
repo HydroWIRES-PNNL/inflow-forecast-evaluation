@@ -6,7 +6,8 @@ A collection of scripts designed to evaluate real-time reservoir inflow forecast
 
 ## Code Descriptions
    * [evaluation.Rmd](./evaluation.Rmd): read anonymized inflow forecasts and processed observations to calculate evaluation metrics and generate an HTML dashboard
-   * [verify-all.R](./verify-all.R): reproduce the quantitative results reported in the paper, including Table 1, the skill scores, the smoothing sensitivity analysis, and the forebay exceedance probabilities
+   * [verify-all.R](./verify-all.R): reproduce the quantitative results reported in the paper, including Table 1, the smoothing sensitivity analysis, and the cumulative forebay exceedance probabilities
+   * [make-revision-figures.R](./make-revision-figures.R): regenerate the cumulative forebay error and exceedance figures from the published data
    * [exploratory-plots.R](./exploratory-plots.R): (optional) plot process observations compared to a series of inflow forecasts, outputting to ./plot/exploratory/
    * [paper/](./paper): the manuscript, as a git submodule
 
