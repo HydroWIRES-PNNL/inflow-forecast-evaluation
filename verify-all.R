@@ -513,24 +513,61 @@ hourly <- fc24 |>
   mutate(error = fc - obs) |>
   filter(location %in% locs)
 
-# Accumulate hourly forecast error over lead time within each forecast issue.
+# Accumulate hourly forecast error within each forecast issue, indexed by
+# position in the delivered horizon rather than by absolute lead time. Forecast A
+# is issued at 04:00 but for 1146 of its 1617 issues the delivered series begins
+# at lead hour 25, so an absolute-lead index compares 8 accumulated hours of A
+# against 32 of B and makes A's exceedance curve non-monotonic through sample
+# composition alone. Indexing by horizon position retains every observation.
 cumulative <- hourly |>
   filter(lead_time > 0) |>
   arrange(location, source, issue_time, lead_time) |>
   group_by(location, source, issue_time) |>
-  mutate(cum_error = cumsum(error)) |>
+  mutate(horizon_hour = row_number(), cum_error = cumsum(error)) |>
   ungroup()
 
-cat("\n--- P(exceed 0.5 ft), neutral forebay start ---\n")
+# 32 h is the longest horizon over which all three products can be compared.
+report_hours <- c(8, 16, 24, 32)
+
+cat("\n--- P(exceed 0.5 ft), neutral forebay start, by hours into horizon ---\n")
 cumulative |>
-  filter(source %in% c("A", "B", "GRH"), lead_time %in% c(24, 48, 72)) |>
-  group_by(location, source, lead_time) |>
+  filter(source %in% c("A", "B", "GRH"), horizon_hour %in% report_hours) |>
+  group_by(location, source, horizon_hour) |>
   summarise(
+    n_issues = n(),
     p_exceed = round(100 * mean(abs(cum_error) > threshold), 1),
     .groups = "drop"
   ) |>
-  mutate(day = lead_time / 24) |>
-  select(-lead_time) |>
+  as.data.frame() |>
+  print()
+
+# Absolute lead times each product's plotted horizon spans, for the captions.
+cat("\n--- absolute lead time spanned by each plotted horizon ---\n")
+cumulative |>
+  filter(horizon_hour <= max(report_hours)) |>
+  group_by(source) |>
+  summarise(
+    first_hour_mean_lead = round(mean(lead_time[horizon_hour == 1]), 1),
+    last_hour_mean_lead = round(
+      mean(lead_time[horizon_hour == max(report_hours)]),
+      1
+    ),
+    .groups = "drop"
+  ) |>
+  as.data.frame() |>
+  print()
+
+# The absolute-lead index, kept to show the artifact it produces for A.
+cat("\n--- for contrast: same quantity indexed by absolute lead time ---\n")
+cumulative |>
+  filter(source %in% c("A", "B", "GRH"), lead_time %in% report_hours) |>
+  group_by(location, source, lead_time) |>
+  summarise(
+    n_issues = n(),
+    mean_hours_accumulated = round(mean(horizon_hour), 1),
+    p_exceed = round(100 * mean(abs(cum_error) > threshold), 1),
+    .groups = "drop"
+  ) |>
   as.data.frame() |>
   print()
 
