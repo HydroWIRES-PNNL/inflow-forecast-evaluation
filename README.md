@@ -7,7 +7,9 @@ A collection of scripts designed to evaluate real-time reservoir inflow forecast
 ## Code Descriptions
    * [evaluation.Rmd](./evaluation.Rmd): read anonymized inflow forecasts and processed observations to calculate evaluation metrics and generate an HTML dashboard
    * [verify-all.R](./verify-all.R): reproduce the quantitative results reported in the paper, including Table 1, the smoothing sensitivity analysis, and the cumulative forebay exceedance probabilities
-   * [make-revision-figures.R](./make-revision-figures.R): regenerate the cumulative forebay error and exceedance figures from the published data
+   * [make-metric-figures.R](./make-metric-figures.R): regenerate the lead-time and by-month performance figures (Figures 3 and 4) from the published data
+   * [make-revision-figures.R](./make-revision-figures.R): regenerate the cumulative forebay error and exceedance figures (Figures 5 and 6) from the published data
+   * [figure-style.R](./figure-style.R): palette, linetypes, and theme shared by the two figure scripts, so the manuscript figures cannot drift apart
    * [exploratory-plots.R](./exploratory-plots.R): (optional) plot process observations compared to a series of inflow forecasts, outputting to ./plot/exploratory/
    * [paper/](./paper): the manuscript, as a git submodule
 
@@ -16,6 +18,7 @@ A collection of scripts designed to evaluate real-time reservoir inflow forecast
    1. Download anonymized and processed data from [Zenodo](https://zenodo.org/records/16921728) in [./processed-data](./processed-data/)
    2. Run `evaluation.Rmd` to evaluate inflow forecasts and generate visualizations
    3. Run `verify-all.R` to reproduce the numbers reported in the paper
+   4. Run `make-metric-figures.R` and `make-revision-figures.R` to regenerate Figures 3--6
 
 Cloning with the manuscript included:
 

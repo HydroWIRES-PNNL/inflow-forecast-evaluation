@@ -2,24 +2,12 @@
 
 suppressPackageStartupMessages(library(tidyverse))
 
+# Palette, linetypes, location labels and theme are shared with figures 3 and 4
+# via make-metric-figures.R, so the two sets of figures cannot drift apart.
+source("figure-style.R")
+
 data_dir <- "processed-data"
 figure_dir <- "paper/figures"
-locations <- c("wilder", "bellows", "vernon")
-location_labels <- c(
-  wilder = "Wilder",
-  bellows = "Bellows Falls",
-  vernon = "Vernon"
-)
-source_levels <- c("A", "B", "GRH")
-# The previous palette put B and GRH on adjacent teals (#01665E, #5AB4AC), which
-# were hard to separate at all and worse where the ribbons overlapped: both sat
-# below the chroma floor and so read as gray, and GRH was under 3:1 contrast
-# against white. These three are validated as a set on all pairs -- worst CVD
-# separation dE 9.2, worst normal-vision dE 24.0 (OKLab x100).
-source_colors <- c(A = "#2a78d6", B = "#eb6834", GRH = "#1baf7a")
-# Identity is carried by dash pattern as well as hue, so the bands stay
-# separable where they overlap, in grayscale, and for colorblind readers.
-source_linetypes <- c(A = "solid", B = "22", GRH = "42")
 threshold_cfs_hours <- 15000
 cfs_hours_per_foot <- 30000
 
@@ -42,7 +30,9 @@ targets <- read_csv(
 hourly <- bind_rows(forecasts, targets) |>
   mutate(
     source = recode(source, grh = "GRH"),
-    source = factor(source, levels = source_levels)
+    # Only the three products appear in these figures; the perfect and
+    # persistence benchmarks belong to figures 3 and 4.
+    source = factor(source, levels = product_levels)
   ) |>
   filter(
     !is.na(source),
@@ -78,11 +68,7 @@ hourly <- bind_rows(forecasts, targets) |>
   ) |>
   ungroup() |>
   mutate(
-    location = factor(
-      location,
-      levels = locations,
-      labels = location_labels[locations]
-    ),
+    location = label_locations(location),
     cum_error_ft = cum_error / cfs_hours_per_foot
   )
 
@@ -127,9 +113,7 @@ figure_5 <- ggplot(
   ) +
   geom_line(aes(y = median), linewidth = 0.9) +
   facet_wrap(vars(location), nrow = 1) +
-  scale_color_manual(values = source_colors, drop = FALSE) +
-  scale_fill_manual(values = source_colors, drop = FALSE) +
-  scale_linetype_manual(values = source_linetypes, drop = FALSE) +
+  scale_source(fill = TRUE) +
   scale_x_continuous(
     breaks = seq(8, max_horizon_hour, 8),
     limits = c(1, max_horizon_hour),
@@ -142,13 +126,7 @@ figure_5 <- ggplot(
     fill = "Forecast",
     linetype = "Forecast"
   ) +
-  theme_bw(base_size = 11) +
-  theme(
-    legend.position = "top",
-    panel.grid.minor = element_blank(),
-    panel.spacing.x = unit(1, "lines"),
-    strip.background = element_rect(fill = "#EEE8D5", color = "grey50")
-  )
+  theme_paper()
 
 ggsave(
   file.path(figure_dir, "5-cum-error-5pct.png"),
@@ -173,9 +151,7 @@ figure_6 <- ggplot(
   geom_line(aes(linetype = source), linewidth = 0.9) +
   geom_point(aes(shape = source), size = 2.4) +
   facet_wrap(vars(location), nrow = 1) +
-  scale_color_manual(values = source_colors, drop = FALSE) +
-  scale_linetype_manual(values = source_linetypes, drop = FALSE) +
-  scale_shape_manual(values = c(A = 16, B = 17, GRH = 15), drop = FALSE) +
+  scale_source(shape = TRUE) +
   scale_x_continuous(
     breaks = report_hours,
     limits = range(report_hours),
@@ -189,13 +165,7 @@ figure_6 <- ggplot(
     linetype = "Forecast",
     shape = "Forecast"
   ) +
-  theme_bw(base_size = 11) +
-  theme(
-    legend.position = "top",
-    panel.grid.minor = element_blank(),
-    panel.spacing.x = unit(1, "lines"),
-    strip.background = element_rect(fill = "#EEE8D5", color = "grey50")
-  )
+  theme_paper()
 
 ggsave(
   file.path(figure_dir, "6-forebay-exceedance.png"),
