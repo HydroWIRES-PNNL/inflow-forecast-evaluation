@@ -172,7 +172,7 @@ figure_6 <- ggplot(
   )
 
 ggsave(
-  file.path(figure_dir, "6a-threshold-1day.png"),
+  file.path(figure_dir, "6-forebay-exceedance.png"),
   figure_6,
   width = 10,
   height = 4.6,
