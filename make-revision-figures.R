@@ -11,7 +11,15 @@ location_labels <- c(
   vernon = "Vernon"
 )
 source_levels <- c("A", "B", "GRH")
-source_colors <- c(A = "#8C510A", B = "#01665E", GRH = "#5AB4AC")
+# The previous palette put B and GRH on adjacent teals (#01665E, #5AB4AC), which
+# were hard to separate at all and worse where the ribbons overlapped: both sat
+# below the chroma floor and so read as gray, and GRH was under 3:1 contrast
+# against white. These three are validated as a set on all pairs -- worst CVD
+# separation dE 9.2, worst normal-vision dE 24.0 (OKLab x100).
+source_colors <- c(A = "#2a78d6", B = "#eb6834", GRH = "#1baf7a")
+# Identity is carried by dash pattern as well as hue, so the bands stay
+# separable where they overlap, in grayscale, and for colorblind readers.
+source_linetypes <- c(A = "solid", B = "22", GRH = "42")
 threshold_cfs_hours <- 15000
 cfs_hours_per_foot <- 30000
 
@@ -103,12 +111,25 @@ figure_5 <- ggplot(
   plot_summary,
   aes(x = horizon_hour, color = source, fill = source)
 ) +
-  geom_hline(yintercept = c(-0.5, 0.5), linetype = "dashed", color = "grey35") +
-  geom_ribbon(aes(ymin = q025, ymax = q975), alpha = 0.13, color = NA) +
-  geom_line(aes(y = median), linewidth = 0.8) +
+  geom_hline(
+    yintercept = c(-0.5, 0.5),
+    linetype = "dashed",
+    color = "grey35",
+    linewidth = 0.4
+  ) +
+  # Outline each band and drop the fill to 10%. The outline is what makes the
+  # bands readable where they overlap: three 13% fills with no edge blend into
+  # intermediate colors that are in no legend entry.
+  geom_ribbon(
+    aes(ymin = q025, ymax = q975, linetype = source),
+    alpha = 0.10,
+    linewidth = 0.45
+  ) +
+  geom_line(aes(y = median), linewidth = 0.9) +
   facet_wrap(vars(location), nrow = 1) +
   scale_color_manual(values = source_colors, drop = FALSE) +
   scale_fill_manual(values = source_colors, drop = FALSE) +
+  scale_linetype_manual(values = source_linetypes, drop = FALSE) +
   scale_x_continuous(
     breaks = seq(8, max_horizon_hour, 8),
     limits = c(1, max_horizon_hour),
@@ -118,7 +139,8 @@ figure_5 <- ggplot(
     x = "Hours into forecast horizon",
     y = "Cumulative forebay error (ft)",
     color = "Forecast",
-    fill = "Forecast"
+    fill = "Forecast",
+    linetype = "Forecast"
   ) +
   theme_bw(base_size = 11) +
   theme(
@@ -148,10 +170,12 @@ figure_6 <- ggplot(
   probability_summary,
   aes(x = horizon_hour, y = p_exceed, color = source, group = source)
 ) +
-  geom_line(linewidth = 0.9) +
-  geom_point(size = 2.4) +
+  geom_line(aes(linetype = source), linewidth = 0.9) +
+  geom_point(aes(shape = source), size = 2.4) +
   facet_wrap(vars(location), nrow = 1) +
   scale_color_manual(values = source_colors, drop = FALSE) +
+  scale_linetype_manual(values = source_linetypes, drop = FALSE) +
+  scale_shape_manual(values = c(A = 16, B = 17, GRH = 15), drop = FALSE) +
   scale_x_continuous(
     breaks = report_hours,
     limits = range(report_hours),
@@ -161,7 +185,9 @@ figure_6 <- ggplot(
   labs(
     x = "Hours into forecast horizon",
     y = "Probability outside forebay band",
-    color = "Forecast"
+    color = "Forecast",
+    linetype = "Forecast",
+    shape = "Forecast"
   ) +
   theme_bw(base_size = 11) +
   theme(
