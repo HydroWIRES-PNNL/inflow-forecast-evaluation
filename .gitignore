@@ -9,6 +9,8 @@ processed-data/*.csv
 .RData
 .Rhistory
 .Rproj.user/
+.Rprofile
+rv/library/
 
 # rendered outputs (regenerable from the Rmd)
 *.zip

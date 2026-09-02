@@ -18,10 +18,27 @@ all_locs <- c("wilder", "bellows", "vernon", "ottauquechee", "sugar", "white")
 # inflows, but the three dams are what the evaluation reports on.
 locs <- c("wilder", "bellows", "vernon")
 
-knitr::opts_chunk$set(echo = FALSE, warning = FALSE, fig.width = 7, fig.height = 3)
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  fig.width = 7,
+  fig.height = 3
+)
 
 library(tidyverse)
-suppressMessages(import::from(hydroGOF, gof, NSE, KGE, me, mse, pbias, nrmse, rPearson, rSD, mNSE))
+suppressMessages(import::from(
+  hydroGOF,
+  gof,
+  NSE,
+  KGE,
+  me,
+  mse,
+  pbias,
+  nrmse,
+  rPearson,
+  rSD,
+  mNSE
+))
 import::from(kableExtra, kbl, kable_minimal, kable_styling)
 ```
 
@@ -38,10 +55,26 @@ Report created: `r now()`
 
 
 ```{r, include=FALSE}
-forecasts_0h <- read_csv("processed-data/forecasts_00h.csv", show = F, progress = F)
-forecasts_6h <- read_csv("processed-data/forecasts_06h.csv", show = F, progress = F)
-forecasts_12h <- read_csv("processed-data/forecasts_12h.csv", show = F, progress = F)
-forecasts_24h <- read_csv("processed-data/forecasts_24h.csv", show = F, progress = F)
+forecasts_0h <- read_csv(
+  "processed-data/forecasts_00h.csv",
+  show = F,
+  progress = F
+)
+forecasts_6h <- read_csv(
+  "processed-data/forecasts_06h.csv",
+  show = F,
+  progress = F
+)
+forecasts_12h <- read_csv(
+  "processed-data/forecasts_12h.csv",
+  show = F,
+  progress = F
+)
+forecasts_24h <- read_csv(
+  "processed-data/forecasts_24h.csv",
+  show = F,
+  progress = F
+)
 # added by Y.Son
 target <- read_csv("processed-data/targets_24h.csv", show = F, progress = F) |>
   add_column(
@@ -61,15 +94,18 @@ forecasts_24h <- forecasts_24h |>
 now <- now()
 
 forecasts <- forecasts_24h |>
-  mutate(source = case_when(
-    source == "A" ~ "A",
-    source == "B" ~ "B",
-    source == "GRH" ~ "GRH",
-    .default = NA
-  )) |>
+  mutate(
+    source = case_when(
+      source == "A" ~ "A",
+      source == "B" ~ "B",
+      source == "GRH" ~ "GRH",
+      .default = NA
+    )
+  ) |>
   filter(
     issue_time >= ISOdate(2023, 6, 1, tz = "US/Eastern"),
-    issue_time <= ISOdate(year(now), month(floor_date(now, "month")), 1, tz = "US/Eastern"),
+    issue_time <=
+      ISOdate(year(now), month(floor_date(now, "month")), 1, tz = "US/Eastern"),
   ) |>
   mutate(
     season = case_when(
@@ -85,74 +121,89 @@ cols <- c("#9FBB73", "#F3B664", "#c44900", "#2C4E80", "#4793AF")
 hourly <-
   forecasts |>
   group_by(issue_time) |>
-  pivot_longer(-c(valid_time, issue_time, source, season),
-    names_sep = "_", names_to = c("location", "type")
+  pivot_longer(
+    -c(valid_time, issue_time, source, season),
+    names_sep = "_",
+    names_to = c("location", "type")
   ) |>
-  mutate(location = factor(location,
-    levels = all_locs
-  )) |>
-  mutate(lead_time = difftime(valid_time, issue_time, units = "hours") |> as.numeric()) |>
-  pivot_wider(id_cols = c(valid_time, issue_time, source, location, lead_time, season), names_from = type) |>
+  mutate(location = factor(location, levels = all_locs)) |>
+  mutate(
+    lead_time = difftime(valid_time, issue_time, units = "hours") |>
+      as.numeric()
+  ) |>
+  pivot_wider(
+    id_cols = c(valid_time, issue_time, source, location, lead_time, season),
+    names_from = type
+  ) |>
   na.omit() |>
   mutate(error = fc - obs) %>%
-  bind_rows(. |>
-    filter(source == "B") |>
-    mutate(
-      source = "perfect",
-      fc = obs,
-      error = fc - obs
-    )) %>%
-  bind_rows(. |>
-    filter(source == "B") |>
-    group_by(location, issue_time) |>
-    mutate(
-      source = "persistence",
-      fc = obsprev[1],
-      error = fc - obs
-    )) |>
+  bind_rows(
+    . |>
+      filter(source == "B") |>
+      mutate(
+        source = "perfect",
+        fc = obs,
+        error = fc - obs
+      )
+  ) %>%
+  bind_rows(
+    . |>
+      filter(source == "B") |>
+      group_by(location, issue_time) |>
+      mutate(
+        source = "persistence",
+        fc = obsprev[1],
+        error = fc - obs
+      )
+  ) |>
   filter(location %in% locs)
 
 forecasts |>
   distinct(valid_time, source, .keep_all = T) |>
   select(-issue_time, -season) |>
-  pivot_longer(-c(valid_time, source),
-    names_sep = "_", names_to = c("location", "type")
+  pivot_longer(
+    -c(valid_time, source),
+    names_sep = "_",
+    names_to = c("location", "type")
   ) |>
   mutate(valid_date = floor_date(valid_time, "day")) |>
   select(-valid_time) |>
   group_by(valid_date, location, type) |>
   mutate(
-    location = factor(location,
-      levels = all_locs
-    )
+    location = factor(location, levels = all_locs)
   ) |>
   group_by(valid_date, source, location, type) |>
   summarise(value = mean(value), .groups = "drop") |>
   pivot_wider(id_cols = c(valid_date, source, location), names_from = type) |>
   mutate(obsprev = lag(obs)) |>
   select(-fc, -obs) |>
-  na.omit() ->
-obs_prev_day
+  na.omit() -> obs_prev_day
 
 daily <-
   forecasts |>
   group_by(issue_time) |>
   mutate(valid_date = floor_date(valid_time, "day")) |>
-  pivot_longer(-c(valid_time, issue_time, source, valid_date, season),
-    names_sep = "_", names_to = c("location", "type")
+  pivot_longer(
+    -c(valid_time, issue_time, source, valid_date, season),
+    names_sep = "_",
+    names_to = c("location", "type")
   ) |>
   mutate(
-    location = factor(location,
-      levels = all_locs
-    )
+    location = factor(location, levels = all_locs)
   ) |>
   group_by(valid_date, issue_time, source, location, type, season) |>
   summarise(value = mean(value), .groups = "drop") |>
-  mutate(lead_time = difftime(valid_date, issue_time, units = "hours") |> as.numeric()) |>
+  mutate(
+    lead_time = difftime(valid_date, issue_time, units = "hours") |>
+      as.numeric()
+  ) |>
   left_join(obs_prev_day, by = join_by(valid_date, source, location)) |>
   mutate(value = ifelse(type == "obsprev", obsprev, value)) |>
   select(-obsprev) |>
-  pivot_wider(id_cols = c(valid_date, issue_time, source, location, lead_time, season), names_from = type) |>
+  pivot_wider(
+    id_cols = c(valid_date, issue_time, source, location, lead_time, season),
+    names_from = type
+  ) |>
   na.omit() |>
   mutate(error = fc - obs) %>%
   bind_rows(
@@ -185,7 +236,8 @@ n_day_ahead <- function(x, n) {
 #day1_ave_forecasts <- daily |> n_day_ahead(1)
 #day2_ave_forecasts <- daily |> n_day_ahead(2)
 #day3_ave_forecasts <- daily |> n_day_ahead(3)
-daily_offset_grh <- daily |> mutate(lead_time = ifelse(source == 'GRH', lead_time + 23, lead_time))
+daily_offset_grh <- daily |>
+  mutate(lead_time = ifelse(source == 'GRH', lead_time + 23, lead_time))
 day1_ave_forecasts <- daily_offset_grh |> n_day_ahead(1)
 day2_ave_forecasts <- daily_offset_grh |> n_day_ahead(2)
 day3_ave_forecasts <- daily_offset_grh |> n_day_ahead(3)
@@ -352,7 +404,8 @@ day1_ave_forecasts |>
 ### Day Ahead Observed vs. Forecast Scatterplot {.tabset}
 ```{r}
 plot_obs_vs_fc <- function(fc) {
-  fc |> ggplot() +
+  fc |>
+    ggplot() +
     geom_point(aes(obs, fc, color = source)) +
     geom_abline(slope = 1) +
     theme_bw() +
@@ -408,10 +461,17 @@ stat_by_month <- function(x, stat) {
     # The no-skill threshold differs by metric: using the mean of the
     # observations as a predictor gives NSE = 0 but KGE = 1 - sqrt(2) ~ -0.41
     # (Knoben et al., 2019), so the reference line must be metric-specific.
-    geom_hline(yintercept = ifelse(stat == "KGE", -0.41, 0), linetype = "dashed") +
+    geom_hline(
+      yintercept = ifelse(stat == "KGE", -0.41, 0),
+      linetype = "dashed"
+    ) +
     geom_line(aes(plot_month, !!as.name(stat), color = source), size = 1) +
     facet_wrap(~location) +
-    scale_x_datetime(date_breaks = "1 month", date_labels = "%b", minor_breaks = NULL) +
+    scale_x_datetime(
+      date_breaks = "1 month",
+      date_labels = "%b",
+      minor_breaks = NULL
+    ) +
     scale_color_manual("Forecast Source", values = cols) +
     theme_bw() +
     theme(axis.text.x = element_text(angle = 90)) +
@@ -423,32 +483,37 @@ stat_by_month <- function(x, stat) {
 #### Kling-Gupta Efficiency (KGE)
 ```{r}
 fc_stats_da_by_month |>
-  stat_by_month("KGE") + coord_cartesian(ylim = c(-0.41, 1))
+  stat_by_month("KGE") +
+  coord_cartesian(ylim = c(-0.41, 1))
 ```
 
 #### Nash-Suttecliffe Efficiency (NSE)
 ```{r}
 fc_stats_da_by_month |>
-  stat_by_month("NSE") + coord_cartesian(ylim = c(-1, 1))
+  stat_by_month("NSE") +
+  coord_cartesian(ylim = c(-1, 1))
 ```
 
 #### Pearson's Correlation (r)
 ```{r}
 fc_stats_da_by_month |>
-  stat_by_month("r") + coord_cartesian(ylim = c(0, 1))
+  stat_by_month("r") +
+  coord_cartesian(ylim = c(0, 1))
 ```
 
 #### Percent Bias
 ```{r}
 fc_stats_da_by_month |>
-  stat_by_month("PBIAS") + coord_cartesian(ylim = c(-100, 100))
+  stat_by_month("PBIAS") +
+  coord_cartesian(ylim = c(-100, 100))
 ```
 
 ## Daily forecast performance vs lead time {.tabset}
 
 ```{r}
 stat_plot_over_time <- function(x, stat) {
-  x |> ggplot() +
+  x |>
+    ggplot() +
     geom_hline(yintercept = 0, linetype = "dashed") +
     geom_line(aes(lead_time / 24, !!as.name(stat), color = source), size = 1) +
     scale_x_continuous(breaks = 0:10, minor_breaks = NULL) +
@@ -466,35 +531,40 @@ stat_plot_over_time <- function(x, stat) {
 #### Overall 
 ```{r}
 fc_stats_daily |>
-  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-0.41, 1))
+  stat_plot_over_time("KGE") +
+  coord_cartesian(ylim = c(-0.41, 1))
 ```
 
 #### Winter
 ```{r}
 fc_stats_daily_by_season |>
   filter(season == "winter") |>
-  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+  stat_plot_over_time("KGE") +
+  coord_cartesian(ylim = c(-1, 1))
 ```
 
 #### Spring
 ```{r}
 fc_stats_daily_by_season |>
   filter(season == "spring") |>
-  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+  stat_plot_over_time("KGE") +
+  coord_cartesian(ylim = c(-1, 1))
 ```
 
 #### Summer
 ```{r}
 fc_stats_daily_by_season |>
   filter(season == "summer") |>
-  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+  stat_plot_over_time("KGE") +
+  coord_cartesian(ylim = c(-1, 1))
 ```
 
 #### Fall
 ```{r}
 fc_stats_daily_by_season |>
   filter(season == "fall") |>
-  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+  stat_plot_over_time("KGE") +
+  coord_cartesian(ylim = c(-1, 1))
 ```
 
 ### Nash-Suttecliffe Efficiency (NSE) {.tabset}
@@ -502,35 +572,40 @@ fc_stats_daily_by_season |>
 #### Overall 
 ```{r}
 fc_stats_daily |>
-  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-2, 1))
+  stat_plot_over_time("NSE") +
+  coord_cartesian(ylim = c(-2, 1))
 ```
 
 #### Winter
 ```{r}
 fc_stats_daily_by_season |>
   filter(season == "winter") |>
-  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-2, 1))
+  stat_plot_over_time("NSE") +
+  coord_cartesian(ylim = c(-2, 1))
 ```
 
 #### Spring
 ```{r}
 fc_stats_daily_by_season |>
   filter(season == "spring") |>
-  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-2, 1))
+  stat_plot_over_time("NSE") +
+  coord_cartesian(ylim = c(-2, 1))
 ```
 
 #### Summer
 ```{r}
 fc_stats_daily_by_season |>
   filter(season == "summer") |>
-  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-2, 1))
+  stat_plot_over_time("NSE") +
+  coord_cartesian(ylim = c(-2, 1))
 ```
 
 #### Fall
 ```{r}
 fc_stats_daily_by_season |>
   filter(season == "fall") |>
-  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-2, 1))
+  stat_plot_over_time("NSE") +
+  coord_cartesian(ylim = c(-2, 1))
 ```
 
 
@@ -539,35 +614,40 @@ fc_stats_daily_by_season |>
 #### Overall 
 ```{r}
 fc_stats_daily |>
-  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+  stat_plot_over_time("r") +
+  coord_cartesian(ylim = c(0, 1))
 ```
 
 #### Winter
 ```{r}
 fc_stats_daily_by_season |>
   filter(season == "winter") |>
-  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+  stat_plot_over_time("r") +
+  coord_cartesian(ylim = c(0, 1))
 ```
 
 #### Spring
 ```{r}
 fc_stats_daily_by_season |>
   filter(season == "spring") |>
-  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+  stat_plot_over_time("r") +
+  coord_cartesian(ylim = c(0, 1))
 ```
 
 #### Summer
 ```{r}
 fc_stats_daily_by_season |>
   filter(season == "summer") |>
-  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+  stat_plot_over_time("r") +
+  coord_cartesian(ylim = c(0, 1))
 ```
 
 #### Fall
 ```{r}
 fc_stats_daily_by_season |>
   filter(season == "fall") |>
-  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+  stat_plot_over_time("r") +
+  coord_cartesian(ylim = c(0, 1))
 ```
 
 
@@ -576,35 +656,40 @@ fc_stats_daily_by_season |>
 #### Overall 
 ```{r}
 fc_stats_daily |>
-  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+  stat_plot_over_time("PBIAS") +
+  coord_cartesian(ylim = c(-75, 50))
 ```
 
 #### Winter 
 ```{r}
 fc_stats_daily_by_season |>
   filter(season == "winter") |>
-  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+  stat_plot_over_time("PBIAS") +
+  coord_cartesian(ylim = c(-75, 50))
 ```
 
 #### Spring 
 ```{r}
 fc_stats_daily_by_season |>
   filter(season == "spring") |>
-  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+  stat_plot_over_time("PBIAS") +
+  coord_cartesian(ylim = c(-75, 50))
 ```
 
 #### Summer 
 ```{r}
 fc_stats_daily_by_season |>
   filter(season == "summer") |>
-  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+  stat_plot_over_time("PBIAS") +
+  coord_cartesian(ylim = c(-75, 50))
 ```
 
 #### Fall 
 ```{r}
 fc_stats_daily_by_season |>
   filter(season == "fall") |>
-  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+  stat_plot_over_time("PBIAS") +
+  coord_cartesian(ylim = c(-75, 50))
 ```
 
 ## Hourly forecast performance vs lead time {.tabset}
@@ -614,70 +699,80 @@ fc_stats_daily_by_season |>
 #### Overall 
 ```{r}
 fc_stats_hourly |>
-  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+  stat_plot_over_time("KGE") +
+  coord_cartesian(ylim = c(-1, 1))
 ```
 
 #### Winter
 ```{r}
 fc_stats_hourly_by_season |>
   filter(season == "winter") |>
-  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+  stat_plot_over_time("KGE") +
+  coord_cartesian(ylim = c(-1, 1))
 ```
 
 #### Spring
 ```{r}
 fc_stats_hourly_by_season |>
   filter(season == "spring") |>
-  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+  stat_plot_over_time("KGE") +
+  coord_cartesian(ylim = c(-1, 1))
 ```
 
 #### Summer
 ```{r}
 fc_stats_hourly_by_season |>
   filter(season == "summer") |>
-  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+  stat_plot_over_time("KGE") +
+  coord_cartesian(ylim = c(-1, 1))
 ```
 
 #### Fall
 ```{r}
 fc_stats_hourly_by_season |>
   filter(season == "fall") |>
-  stat_plot_over_time("KGE") + coord_cartesian(ylim = c(-1, 1))
+  stat_plot_over_time("KGE") +
+  coord_cartesian(ylim = c(-1, 1))
 ```
 ### Nash-Suttecliffe Efficiency (NSE) {.tabset}
 
 #### Overall 
 ```{r}
 fc_stats_hourly |>
-  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-1, 1))
+  stat_plot_over_time("NSE") +
+  coord_cartesian(ylim = c(-1, 1))
 ```
 
 #### Winter
 ```{r}
 fc_stats_hourly_by_season |>
   filter(season == "winter") |>
-  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-1, 1))
+  stat_plot_over_time("NSE") +
+  coord_cartesian(ylim = c(-1, 1))
 ```
 
 #### Spring
 ```{r}
 fc_stats_hourly_by_season |>
   filter(season == "spring") |>
-  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-1, 1))
+  stat_plot_over_time("NSE") +
+  coord_cartesian(ylim = c(-1, 1))
 ```
 
 #### Summer
 ```{r}
 fc_stats_hourly_by_season |>
   filter(season == "summer") |>
-  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-1, 1))
+  stat_plot_over_time("NSE") +
+  coord_cartesian(ylim = c(-1, 1))
 ```
 
 #### Fall
 ```{r}
 fc_stats_hourly_by_season |>
   filter(season == "fall") |>
-  stat_plot_over_time("NSE") + coord_cartesian(ylim = c(-1, 1))
+  stat_plot_over_time("NSE") +
+  coord_cartesian(ylim = c(-1, 1))
 ```
 
 ### Pearson's Correlation (r) {.tabset}
@@ -685,35 +780,40 @@ fc_stats_hourly_by_season |>
 #### Overall 
 ```{r}
 fc_stats_hourly |>
-  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+  stat_plot_over_time("r") +
+  coord_cartesian(ylim = c(0, 1))
 ```
 
 #### Winter
 ```{r}
 fc_stats_hourly_by_season |>
   filter(season == "winter") |>
-  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+  stat_plot_over_time("r") +
+  coord_cartesian(ylim = c(0, 1))
 ```
 
 #### Spring
 ```{r}
 fc_stats_hourly_by_season |>
   filter(season == "spring") |>
-  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+  stat_plot_over_time("r") +
+  coord_cartesian(ylim = c(0, 1))
 ```
 
 #### Summer
 ```{r}
 fc_stats_hourly_by_season |>
   filter(season == "summer") |>
-  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+  stat_plot_over_time("r") +
+  coord_cartesian(ylim = c(0, 1))
 ```
 
 #### Fall
 ```{r}
 fc_stats_hourly_by_season |>
   filter(season == "fall") |>
-  stat_plot_over_time("r") + coord_cartesian(ylim = c(0, 1))
+  stat_plot_over_time("r") +
+  coord_cartesian(ylim = c(0, 1))
 ```
 
 
@@ -722,42 +822,47 @@ fc_stats_hourly_by_season |>
 #### Overall 
 ```{r}
 fc_stats_hourly |>
-  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+  stat_plot_over_time("PBIAS") +
+  coord_cartesian(ylim = c(-75, 50))
 ```
 
 #### Winter 
 ```{r}
 fc_stats_hourly_by_season |>
   filter(season == "winter") |>
-  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+  stat_plot_over_time("PBIAS") +
+  coord_cartesian(ylim = c(-75, 50))
 ```
 
 #### Spring 
 ```{r}
 fc_stats_hourly_by_season |>
   filter(season == "spring") |>
-  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+  stat_plot_over_time("PBIAS") +
+  coord_cartesian(ylim = c(-75, 50))
 ```
 
 #### Summer 
 ```{r}
 fc_stats_hourly_by_season |>
   filter(season == "summer") |>
-  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+  stat_plot_over_time("PBIAS") +
+  coord_cartesian(ylim = c(-75, 50))
 ```
 
 #### Fall 
 ```{r}
 fc_stats_hourly_by_season |>
   filter(season == "fall") |>
-  stat_plot_over_time("PBIAS") + coord_cartesian(ylim = c(-75, 50))
+  stat_plot_over_time("PBIAS") +
+  coord_cartesian(ylim = c(-75, 50))
 ```
 
 ## Cumulative Error {.tabset}
 ```{r}
 threshold <- 15000
 threshold_elev <- 5 / 10
-cum_error_raw = hourly |>
+cum_error_raw <- hourly |>
   filter(lead_time > 0) |>
   arrange(location, source, issue_time, lead_time) |>
   group_by(location, source, issue_time) |>
@@ -765,13 +870,19 @@ cum_error_raw = hourly |>
     cum_error = cumsum(error),
     dist_to_upper_thresh = pmin(pmax(threshold - cum_error, 0), 2 * threshold),
     dist_to_lower_thresh = pmin(pmax(cum_error + threshold, 0), 2 * threshold),
-    dist_to_upper_thresh = (dist_to_upper_thresh - threshold) / dist_to_upper_thresh * 5 / 10,
-    dist_to_lower_thresh = (dist_to_lower_thresh - threshold) / dist_to_lower_thresh * 5 / 10,
+    dist_to_upper_thresh = (dist_to_upper_thresh - threshold) /
+      dist_to_upper_thresh *
+      5 /
+      10,
+    dist_to_lower_thresh = (dist_to_lower_thresh - threshold) /
+      dist_to_lower_thresh *
+      5 /
+      10,
     dist_to_nearest_thresh = pmin(dist_to_upper_thresh, dist_to_lower_thresh)
   ) |>
   ungroup()
 
-cum_error_raw_seasonal = hourly |>
+cum_error_raw_seasonal <- hourly |>
   filter(lead_time > 0) |>
   arrange(location, source, issue_time, lead_time) |>
   group_by(location, source, issue_time, season) |>
@@ -779,8 +890,14 @@ cum_error_raw_seasonal = hourly |>
     cum_error = cumsum(error),
     dist_to_upper_thresh = pmin(pmax(threshold - cum_error, 0), 2 * threshold),
     dist_to_lower_thresh = pmin(pmax(cum_error + threshold, 0), 2 * threshold),
-    dist_to_upper_thresh = (dist_to_upper_thresh - threshold) / dist_to_upper_thresh * 5 / 10,
-    dist_to_lower_thresh = (dist_to_lower_thresh - threshold) / dist_to_lower_thresh * 5 / 10,
+    dist_to_upper_thresh = (dist_to_upper_thresh - threshold) /
+      dist_to_upper_thresh *
+      5 /
+      10,
+    dist_to_lower_thresh = (dist_to_lower_thresh - threshold) /
+      dist_to_lower_thresh *
+      5 /
+      10,
     dist_to_nearest_thresh = pmin(dist_to_upper_thresh, dist_to_lower_thresh)
   ) |>
   ungroup()
@@ -794,7 +911,8 @@ cum_error_raw |>
     q50_cum_error = quantile(cum_error, 0.50),
     q25_cum_error = quantile(cum_error, 0.25),
     q05_cum_error = quantile(cum_error, 0.025),
-    p_bust = length(which(cum_error > threshold | cum_error < -threshold)) / length(cum_error),
+    p_bust = length(which(cum_error > threshold | cum_error < -threshold)) /
+      length(cum_error),
     dist_to_upper_thresh_q95 = quantile(dist_to_upper_thresh, .975),
     dist_to_upper_thresh_q75 = quantile(dist_to_upper_thresh, .75),
     dist_to_upper_thresh_q50 = quantile(dist_to_upper_thresh, .5),
@@ -812,8 +930,7 @@ cum_error_raw |>
     dist_to_nearest_thresh_q05 = quantile(dist_to_nearest_thresh, .025),
     .groups = "drop"
   ) |>
-  filter(location %in% c("wilder", "vernon", "bellows")) ->
-cum_error
+  filter(location %in% c("wilder", "vernon", "bellows")) -> cum_error
 
 cum_error_raw_seasonal |>
   group_by(location, lead_time, source, season) |>
@@ -824,7 +941,8 @@ cum_error_raw_seasonal |>
     q50_cum_error = quantile(cum_error, 0.50),
     q25_cum_error = quantile(cum_error, 0.25),
     q05_cum_error = quantile(cum_error, 0.025),
-    p_bust = length(which(cum_error > threshold | cum_error < -threshold)) / length(cum_error),
+    p_bust = length(which(cum_error > threshold | cum_error < -threshold)) /
+      length(cum_error),
     dist_to_upper_thresh_q95 = quantile(dist_to_upper_thresh, .975),
     dist_to_upper_thresh_q75 = quantile(dist_to_upper_thresh, .75),
     dist_to_upper_thresh_q50 = quantile(dist_to_upper_thresh, .5),
@@ -842,8 +960,7 @@ cum_error_raw_seasonal |>
     dist_to_nearest_thresh_q05 = quantile(dist_to_nearest_thresh, .025),
     .groups = "drop"
   ) |>
-  filter(location %in% c("wilder", "vernon", "bellows")) ->
-cum_error_seasonal
+  filter(location %in% c("wilder", "vernon", "bellows")) -> cum_error_seasonal
 ```
 
 ### 2.5th to 97.5th percentile (Middle 95%) {.tabset}
@@ -851,14 +968,19 @@ cum_error_seasonal
 cum_error_plot <- function(error, threshold = threshold_elev, scale = 30000) {
   ggplot(error) +
     geom_hline(yintercept = c(-threshold, threshold), linetype = "dashed") +
-    geom_errorbar(aes(lead_time / 24,
+    geom_errorbar(aes(
+      lead_time / 24,
       y = q50_cum_error / scale,
-      ymin = q05_cum_error / scale, ymax = q95_cum_error / scale, color = source
+      ymin = q05_cum_error / scale,
+      ymax = q95_cum_error / scale,
+      color = source
     )) +
     geom_point(aes(lead_time / 24, y = q50_cum_error / scale, color = source)) +
     scale_color_manual("Forecast Source", values = cols) +
     scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
-    scale_y_continuous(breaks = seq(-threshold * 1.2, threshold * 1.2, len = 7)) +
+    scale_y_continuous(
+      breaks = seq(-threshold * 1.2, threshold * 1.2, len = 7)
+    ) +
     coord_cartesian(ylim = c(-threshold * 1.2, threshold * 1.2)) +
     facet_grid(source ~ location) +
     theme_bw() +
@@ -913,14 +1035,19 @@ cum_error_seasonal |>
 cum_error_plot50 <- function(error, threshold = threshold_elev, scale = 30000) {
   ggplot(error) +
     geom_hline(yintercept = c(-threshold, threshold), linetype = "dashed") +
-    geom_errorbar(aes(lead_time / 24,
+    geom_errorbar(aes(
+      lead_time / 24,
       y = q50_cum_error / scale,
-      ymin = q25_cum_error / scale, ymax = q75_cum_error / scale, color = source
+      ymin = q25_cum_error / scale,
+      ymax = q75_cum_error / scale,
+      color = source
     )) +
     geom_point(aes(lead_time / 24, y = q50_cum_error / scale, color = source)) +
     scale_color_manual("Forecast Source", values = cols) +
     scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
-    scale_y_continuous(breaks = seq(-threshold * 1.2, threshold * 1.2, len = 7)) +
+    scale_y_continuous(
+      breaks = seq(-threshold * 1.2, threshold * 1.2, len = 7)
+    ) +
     coord_cartesian(ylim = c(-threshold * 1.2, threshold * 1.2)) +
     facet_grid(source ~ location) +
     theme_bw() +

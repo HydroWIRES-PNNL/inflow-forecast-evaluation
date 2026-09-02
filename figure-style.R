@@ -22,6 +22,7 @@
 # Identity is carried by dash pattern as well as by hue, so every figure stays
 # readable in greyscale and under colourblindness.
 # %% ---------------------------------------------------------------------------
+library(tidyverse)
 
 product_levels <- c("A", "B", "GRH")
 benchmark_levels <- c("perfect", "persistence")
@@ -80,18 +81,30 @@ theme_paper <- function(base_size = 11) {
 scale_source <- function(name = "Forecast", fill = FALSE, shape = FALSE) {
   out <- list(
     ggplot2::scale_color_manual(name, values = source_colors, drop = FALSE),
-    ggplot2::scale_linetype_manual(name, values = source_linetypes, drop = FALSE)
+    ggplot2::scale_linetype_manual(
+      name,
+      values = source_linetypes,
+      drop = FALSE
+    )
   )
   if (fill) {
     out <- c(
       out,
-      list(ggplot2::scale_fill_manual(name, values = source_colors, drop = FALSE))
+      list(ggplot2::scale_fill_manual(
+        name,
+        values = source_colors,
+        drop = FALSE
+      ))
     )
   }
   if (shape) {
     out <- c(
       out,
-      list(ggplot2::scale_shape_manual(name, values = source_shapes, drop = FALSE))
+      list(ggplot2::scale_shape_manual(
+        name,
+        values = source_shapes,
+        drop = FALSE
+      ))
     )
   }
   out
