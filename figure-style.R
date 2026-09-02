@@ -61,7 +61,7 @@ label_locations <- function(x) {
   )
 }
 
-# Common theme for every manuscript figure: cream facet strips, no minor grid,
+# Common theme for every manuscript figure: light grey facet strips, no minor grid,
 # legend on top.
 theme_paper <- function(base_size = 11) {
   ggplot2::theme_bw(base_size = base_size) +
@@ -70,7 +70,7 @@ theme_paper <- function(base_size = 11) {
       panel.grid.minor = ggplot2::element_blank(),
       panel.spacing = grid::unit(0.9, "lines"),
       strip.background = ggplot2::element_rect(
-        fill = "#EEE8D5",
+        fill = "grey90",
         color = "grey50"
       )
     )
