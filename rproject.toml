@@ -19,4 +19,7 @@ dependencies = [
     "tidyverse",
     "import",
     "zoo",
+    # evaluation.Rmd must be rendered by rmarkdown, not Quarto: its section tabs
+    # use the R Markdown `{.tabset}` attribute, which Quarto ignores.
+    "rmarkdown",
 ]

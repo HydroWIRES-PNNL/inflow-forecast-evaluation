@@ -14,6 +14,10 @@ rv/library/
 
 # rendered outputs (regenerable from the Rmd)
 *.zip
+# evaluation.html is self-contained, so these sidecars are only ever left behind
+# by a non-self-contained (e.g. Quarto) render
+evaluation_files/
+evaluation.knit.md
 
 # secrets and environment
 .envrc

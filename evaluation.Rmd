@@ -1,11 +1,21 @@
 ---
 title: "GRH Forecast Evaluation"
-output: 
+subtitle: "`r params$subtitle`"
+output:
   html_document:
     toc: true
     toc_float: true
     theme: sandstone
     collapsed: true
+    css: evaluation.css
+params:
+  # NULL for the full evaluation. A named list of cfs caps per location produces
+  # the low-flow variant (see render-evaluation.R).
+  flow_caps: null
+  # Kept out of the YAML expression above on purpose: pandoc drops the whole
+  # metadata field if the rendered subtitle contains a "<", so the caller
+  # supplies plain prose.
+  subtitle: "All flow conditions"
 editor_options:
   chunk_output_type: console
 ---
@@ -13,16 +23,13 @@ editor_options:
 ```{r setup, include=FALSE}
 # All evaluation points present in the data.
 all_locs <- c("wilder", "bellows", "vernon", "ottauquechee", "sugar", "white")
-# Only these locations are included in the figures and tables. The three
-# tributaries are retained in the data because they contribute to the mainstem
-# inflows, but the three dams are what the evaluation reports on.
-locs <- c("wilder", "bellows", "vernon")
 
 knitr::opts_chunk$set(
   echo = FALSE,
   warning = FALSE,
-  fig.width = 7,
-  fig.height = 3
+  fig.width = 12,
+  fig.height = 3.6,
+  out.width = "100%"
 )
 
 library(tidyverse)
@@ -40,6 +47,14 @@ suppressMessages(import::from(
   mNSE
 ))
 import::from(kableExtra, kbl, kable_minimal, kable_styling)
+
+# Palette, linetypes, shapes, location labels and theme are shared with the
+# manuscript figure scripts (make-metric-figures.R, make-revision-figures.R) so
+# the dashboard and the paper cannot drift apart. This file also supplies
+# `locations` (the three dams the evaluation reports on -- the tributaries stay
+# in the data because they feed the mainstem inflows), `product_levels` and
+# `source_levels`.
+source("figure-style.R")
 ```
 
 Report created: `r now()`
@@ -75,7 +90,9 @@ forecasts_24h <- read_csv(
   show = F,
   progress = F
 )
-# added by Y.Son
+# The in-house GRH product is supplied as forebay targets rather than as
+# forecasts, so it is renamed into the `_fc` columns and stacked with the two
+# commercial products.
 target <- read_csv("processed-data/targets_24h.csv", show = F, progress = F) |>
   add_column(
     source = "GRH"
@@ -90,6 +107,37 @@ target <- read_csv("processed-data/targets_24h.csv", show = F, progress = F) |>
   )
 forecasts_24h <- forecasts_24h |>
   bind_rows(target)
+
+# Optional low-flow restriction. `params$flow_caps` is NULL for the full
+# evaluation; the capped variant passes a named list of cfs caps per location.
+# The cap is applied per day, not per hour: if the observed flow at a location
+# exceeds its cap at any hour of a day, that whole day is dropped for that
+# location. Blanking `_fc` is enough because the pipelines below `na.omit()`,
+# and the `perfect` and `persistence` benchmarks are derived after that, so they
+# see the same restricted sample as the products.
+apply_flow_caps <- function(x, caps) {
+  if (!length(caps)) {
+    return(x)
+  }
+  x <- x |> mutate(valid_date = floor_date(valid_time, "day"))
+  for (loc in names(caps)) {
+    days_over <- x |>
+      filter(.data[[paste0(loc, "_obs")]] > caps[[loc]]) |>
+      pull(valid_date) |>
+      unique()
+    x <- x |>
+      mutate(
+        "{loc}_fc" := if_else(
+          valid_date %in% days_over,
+          NA,
+          .data[[paste0(loc, "_fc")]]
+        )
+      )
+  }
+  x |> select(-valid_date)
+}
+
+forecasts_24h <- forecasts_24h |> apply_flow_caps(params$flow_caps)
 
 now <- now()
 
@@ -115,8 +163,6 @@ forecasts <- forecasts_24h |>
       month(issue_time) %in% 9:11 ~ "fall"
     )
   )
-
-cols <- c("#9FBB73", "#F3B664", "#c44900", "#2C4E80", "#4793AF")
 
 hourly <-
   forecasts |>
@@ -156,7 +202,9 @@ hourly <-
         error = fc - obs
       )
   ) |>
-  filter(location %in% locs)
+  filter(location %in% locations) |>
+  # Fix the legend order and let the shared scales key off named values.
+  mutate(source = factor(source, levels = source_levels))
 
 forecasts |>
   distinct(valid_time, source, .keep_all = T) |>
@@ -225,17 +273,17 @@ daily <-
         error = fc - obs
       )
   ) |>
-  filter(location %in% locs)
+  filter(location %in% locations) |>
+  mutate(source = factor(source, levels = source_levels))
 
 
 n_day_ahead <- function(x, n) {
   x |> filter(lead_time <= n * 24, lead_time > (n - 1) * 24)
 }
 
-# revised by Y.Son
-#day1_ave_forecasts <- daily |> n_day_ahead(1)
-#day2_ave_forecasts <- daily |> n_day_ahead(2)
-#day3_ave_forecasts <- daily |> n_day_ahead(3)
+# GRH targets are issued a day earlier than the commercial products, so the GRH
+# lead time is offset by 23 h before the day-ahead window is taken. Same
+# convention as make-metric-figures.R and verify-all.R.
 daily_offset_grh <- daily |>
   mutate(lead_time = ifelse(source == 'GRH', lead_time + 23, lead_time))
 day1_ave_forecasts <- daily_offset_grh |> n_day_ahead(1)
@@ -353,17 +401,19 @@ plot_error_boxplots <- function(fc) {
     group_by(source, location) |>
     filter(error < quantile(error, 0.95), error > quantile(error, 0.05)) |>
     bind_rows(fc |> filter(source == "perfect")) |>
+    ungroup() |>
+    mutate(location = label_locations(location)) |>
     ggplot() +
-    geom_hline(yintercept = 0) +
+    geom_hline(yintercept = 0, color = "grey35") +
     geom_boxplot(aes(source, error, fill = source)) +
-    facet_wrap(~location, scales = "free") +
-    scale_fill_manual(values = cols) +
-    theme_bw() +
+    facet_wrap(vars(location), nrow = 1, scales = "free") +
+    scale_fill_manual("Forecast", values = source_colors, drop = FALSE) +
+    theme_paper() +
     theme(
       legend.position = "none",
       axis.text.x = element_text(angle = 20, hjust = 1)
     ) +
-    labs(y = "Daily Average Flow Error [cfs]", x = "Forecast Source")
+    labs(y = "Daily average flow error (cfs)", x = "Forecast")
 }
 ```
 
@@ -406,14 +456,18 @@ day1_ave_forecasts |>
 plot_obs_vs_fc <- function(fc) {
   fc |>
     ggplot() +
-    geom_point(aes(obs, fc, color = source)) +
-    geom_abline(slope = 1) +
-    theme_bw() +
-    facet_wrap(~source) +
-    scale_color_manual(values = cols) +
+    geom_abline(slope = 1, color = "grey35") +
+    geom_point(aes(obs, fc, color = source), alpha = 0.4, size = 0.7) +
+    facet_wrap(vars(source), nrow = 1) +
+    scale_color_manual("Forecast", values = source_colors, drop = FALSE) +
+    # Five panels in a row leaves no width for full cfs labels, so both axes are
+    # in thousands.
+    scale_x_continuous(labels = \(x) x / 1000) +
+    scale_y_continuous(labels = \(x) x / 1000) +
+    theme_paper() +
     theme(legend.position = "none") +
     coord_equal(xlim = c(0, 80000), ylim = c(0, 80000)) +
-    labs(y = "Forecast", x = "Observed")
+    labs(y = "Forecast (1000 cfs)", x = "Observed (1000 cfs)")
 }
 ```
 
@@ -452,31 +506,39 @@ day1_ave_forecasts |>
 
 ### Day Ahead Performance by Month {.tabset}
 
+Paper Figure 4 is this plot for the four metrics below.
 
 ```{r}
+# Mirrors stat_by_month() in make-metric-figures.R (paper Figure 4).
 stat_by_month <- function(x, stat) {
   x |>
-    mutate(plot_month = ISOdate(ifelse(month >= 6, 2000, 2001), month, 1)) |>
+    mutate(
+      location = label_locations(location),
+      plot_month = ISOdate(ifelse(month >= 6, 2000, 2001), month, 1)
+    ) |>
     ggplot() +
     # The no-skill threshold differs by metric: using the mean of the
     # observations as a predictor gives NSE = 0 but KGE = 1 - sqrt(2) ~ -0.41
     # (Knoben et al., 2019), so the reference line must be metric-specific.
     geom_hline(
       yintercept = ifelse(stat == "KGE", -0.41, 0),
-      linetype = "dashed"
+      linetype = "dashed",
+      color = "grey35"
     ) +
-    geom_line(aes(plot_month, !!as.name(stat), color = source), size = 1) +
-    facet_wrap(~location) +
+    geom_line(
+      aes(plot_month, !!as.name(stat), color = source, linetype = source),
+      linewidth = 0.8
+    ) +
+    facet_wrap(vars(location), nrow = 1) +
     scale_x_datetime(
       date_breaks = "1 month",
       date_labels = "%b",
       minor_breaks = NULL
     ) +
-    scale_color_manual("Forecast Source", values = cols) +
-    theme_bw() +
-    theme(axis.text.x = element_text(angle = 90)) +
-    labs(x = "") +
-    theme(legend.position = "top")
+    scale_source() +
+    theme_paper() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+    labs(x = "", y = stat)
 }
 ```
 
@@ -510,19 +572,24 @@ fc_stats_da_by_month |>
 
 ## Daily forecast performance vs lead time {.tabset}
 
+Paper Figure 3 is the "Overall" tab of each metric below.
+
 ```{r}
+# Mirrors stat_over_lead() in make-metric-figures.R (paper Figure 3).
 stat_plot_over_time <- function(x, stat) {
   x |>
+    mutate(location = label_locations(location)) |>
     ggplot() +
-    geom_hline(yintercept = 0, linetype = "dashed") +
-    geom_line(aes(lead_time / 24, !!as.name(stat), color = source), size = 1) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey35") +
+    geom_line(
+      aes(lead_time / 24, !!as.name(stat), color = source, linetype = source),
+      linewidth = 0.8
+    ) +
     scale_x_continuous(breaks = 0:10, minor_breaks = NULL) +
-    facet_wrap(~location) +
-    theme_bw() +
-    scale_color_manual("Forecast Source", values = cols) +
-    # geom_vline(xintercept = 24) +
-    theme(legend.position = "top") +
-    labs(x = "Lead Time (days)")
+    facet_wrap(vars(location), nrow = 1) +
+    scale_source() +
+    theme_paper() +
+    labs(x = "Lead time (days)", y = stat)
 }
 ```
 
@@ -859,277 +926,221 @@ fc_stats_hourly_by_season |>
 ```
 
 ## Cumulative Error {.tabset}
+
+Cumulative inflow error is what moves the forebay, so it is accumulated over each
+issue's own delivered horizon rather than over absolute lead time. Forecast A is
+issued at 04:00 but for most of its issues the delivered series does not start
+until lead hour 25, so an absolute-lead axis compares 8 accumulated hours of A
+against 32 of B and produces a non-monotonic A curve driven purely by sample
+composition. Indexing by position in the horizon keeps every row and makes each
+point a like-for-like N-hour accumulation. This is the same construction as
+paper Figures 5 and 6 (`make-revision-figures.R`).
+
+Only the three forecast products appear here. `perfect` accumulates exactly zero
+by construction and `persistence` is a day-ahead benchmark, so neither is
+informative on an hourly accumulation.
+
 ```{r}
+# Forebay band, in cfs-hours and in feet. 15,000 cfs-hours of inflow error moves
+# the forebay by 0.5 ft at 30,000 cfs-hours per foot.
 threshold <- 15000
-threshold_elev <- 5 / 10
+cfs_hours_per_foot <- 30000
+threshold_elev <- threshold / cfs_hours_per_foot
+
+# GRH targets extend only 32 h past issue, so 32 h is the longest horizon over
+# which all three products can be compared.
+max_horizon_hour <- 32
+
 cum_error_raw <- hourly |>
-  filter(lead_time > 0) |>
+  filter(source %in% product_levels, lead_time > 0) |>
+  mutate(source = factor(as.character(source), levels = product_levels)) |>
   arrange(location, source, issue_time, lead_time) |>
   group_by(location, source, issue_time) |>
   mutate(
-    cum_error = cumsum(error),
-    dist_to_upper_thresh = pmin(pmax(threshold - cum_error, 0), 2 * threshold),
-    dist_to_lower_thresh = pmin(pmax(cum_error + threshold, 0), 2 * threshold),
-    dist_to_upper_thresh = (dist_to_upper_thresh - threshold) /
-      dist_to_upper_thresh *
-      5 /
-      10,
-    dist_to_lower_thresh = (dist_to_lower_thresh - threshold) /
-      dist_to_lower_thresh *
-      5 /
-      10,
-    dist_to_nearest_thresh = pmin(dist_to_upper_thresh, dist_to_lower_thresh)
+    horizon_hour = row_number(),
+    cum_error = cumsum(error)
   ) |>
-  ungroup()
+  ungroup() |>
+  filter(horizon_hour <= max_horizon_hour)
 
-cum_error_raw_seasonal <- hourly |>
-  filter(lead_time > 0) |>
-  arrange(location, source, issue_time, lead_time) |>
-  group_by(location, source, issue_time, season) |>
-  mutate(
-    cum_error = cumsum(error),
-    dist_to_upper_thresh = pmin(pmax(threshold - cum_error, 0), 2 * threshold),
-    dist_to_lower_thresh = pmin(pmax(cum_error + threshold, 0), 2 * threshold),
-    dist_to_upper_thresh = (dist_to_upper_thresh - threshold) /
-      dist_to_upper_thresh *
-      5 /
-      10,
-    dist_to_lower_thresh = (dist_to_lower_thresh - threshold) /
-      dist_to_lower_thresh *
-      5 /
-      10,
-    dist_to_nearest_thresh = pmin(dist_to_upper_thresh, dist_to_lower_thresh)
-  ) |>
-  ungroup()
+summarise_cum_error <- function(x, ...) {
+  x |>
+    group_by(location, source, horizon_hour, ...) |>
+    summarise(
+      n_issues = n(),
+      mean_lead = mean(lead_time),
+      ave_cum_error = mean(cum_error),
+      q95_cum_error = quantile(cum_error, 0.975),
+      q75_cum_error = quantile(cum_error, 0.75),
+      q50_cum_error = quantile(cum_error, 0.50),
+      q25_cum_error = quantile(cum_error, 0.25),
+      q05_cum_error = quantile(cum_error, 0.025),
+      p_bust = mean(abs(cum_error) > threshold),
+      .groups = "drop"
+    ) |>
+    mutate(location = label_locations(location))
+}
 
-cum_error_raw |>
-  group_by(location, lead_time, source) |>
-  summarise(
-    ave_cum_error = mean(cum_error),
-    q95_cum_error = quantile(cum_error, 0.975),
-    q75_cum_error = quantile(cum_error, 0.75),
-    q50_cum_error = quantile(cum_error, 0.50),
-    q25_cum_error = quantile(cum_error, 0.25),
-    q05_cum_error = quantile(cum_error, 0.025),
-    p_bust = length(which(cum_error > threshold | cum_error < -threshold)) /
-      length(cum_error),
-    dist_to_upper_thresh_q95 = quantile(dist_to_upper_thresh, .975),
-    dist_to_upper_thresh_q75 = quantile(dist_to_upper_thresh, .75),
-    dist_to_upper_thresh_q50 = quantile(dist_to_upper_thresh, .5),
-    dist_to_upper_thresh_q25 = quantile(dist_to_upper_thresh, .25),
-    dist_to_upper_thresh_q05 = quantile(dist_to_upper_thresh, .025),
-    dist_to_lower_thresh_q95 = quantile(dist_to_lower_thresh, .975),
-    dist_to_lower_thresh_q75 = quantile(dist_to_lower_thresh, .75),
-    dist_to_lower_thresh_q50 = quantile(dist_to_lower_thresh, .5),
-    dist_to_lower_thresh_q25 = quantile(dist_to_lower_thresh, .25),
-    dist_to_lower_thresh_q05 = quantile(dist_to_lower_thresh, .025),
-    dist_to_nearest_thresh_q95 = quantile(dist_to_nearest_thresh, .975),
-    dist_to_nearest_thresh_q75 = quantile(dist_to_nearest_thresh, .75),
-    dist_to_nearest_thresh_q50 = quantile(dist_to_nearest_thresh, .5),
-    dist_to_nearest_thresh_q25 = quantile(dist_to_nearest_thresh, .25),
-    dist_to_nearest_thresh_q05 = quantile(dist_to_nearest_thresh, .025),
-    .groups = "drop"
-  ) |>
-  filter(location %in% c("wilder", "vernon", "bellows")) -> cum_error
-
-cum_error_raw_seasonal |>
-  group_by(location, lead_time, source, season) |>
-  summarise(
-    ave_cum_error = mean(cum_error),
-    q95_cum_error = quantile(cum_error, 0.975),
-    q75_cum_error = quantile(cum_error, 0.75),
-    q50_cum_error = quantile(cum_error, 0.50),
-    q25_cum_error = quantile(cum_error, 0.25),
-    q05_cum_error = quantile(cum_error, 0.025),
-    p_bust = length(which(cum_error > threshold | cum_error < -threshold)) /
-      length(cum_error),
-    dist_to_upper_thresh_q95 = quantile(dist_to_upper_thresh, .975),
-    dist_to_upper_thresh_q75 = quantile(dist_to_upper_thresh, .75),
-    dist_to_upper_thresh_q50 = quantile(dist_to_upper_thresh, .5),
-    dist_to_upper_thresh_q25 = quantile(dist_to_upper_thresh, .25),
-    dist_to_upper_thresh_q05 = quantile(dist_to_upper_thresh, .025),
-    dist_to_lower_thresh_q95 = quantile(dist_to_lower_thresh, .975),
-    dist_to_lower_thresh_q75 = quantile(dist_to_lower_thresh, .75),
-    dist_to_lower_thresh_q50 = quantile(dist_to_lower_thresh, .5),
-    dist_to_lower_thresh_q25 = quantile(dist_to_lower_thresh, .25),
-    dist_to_lower_thresh_q05 = quantile(dist_to_lower_thresh, .025),
-    dist_to_nearest_thresh_q95 = quantile(dist_to_nearest_thresh, .975),
-    dist_to_nearest_thresh_q75 = quantile(dist_to_nearest_thresh, .75),
-    dist_to_nearest_thresh_q50 = quantile(dist_to_nearest_thresh, .5),
-    dist_to_nearest_thresh_q25 = quantile(dist_to_nearest_thresh, .25),
-    dist_to_nearest_thresh_q05 = quantile(dist_to_nearest_thresh, .025),
-    .groups = "drop"
-  ) |>
-  filter(location %in% c("wilder", "vernon", "bellows")) -> cum_error_seasonal
+cum_error <- cum_error_raw |> summarise_cum_error()
+cum_error_seasonal <- cum_error_raw |> summarise_cum_error(season)
 ```
 
 ### 2.5th to 97.5th percentile (Middle 95%) {.tabset}
+
+Paper Figure 5 is the "Overall" tab.
+
 ```{r}
-cum_error_plot <- function(error, threshold = threshold_elev, scale = 30000) {
-  ggplot(error) +
-    geom_hline(yintercept = c(-threshold, threshold), linetype = "dashed") +
-    geom_errorbar(aes(
-      lead_time / 24,
-      y = q50_cum_error / scale,
-      ymin = q05_cum_error / scale,
-      ymax = q95_cum_error / scale,
-      color = source
-    )) +
-    geom_point(aes(lead_time / 24, y = q50_cum_error / scale, color = source)) +
-    scale_color_manual("Forecast Source", values = cols) +
-    scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
-    scale_y_continuous(
-      breaks = seq(-threshold * 1.2, threshold * 1.2, len = 7)
+# Mirrors figure_5 in make-revision-figures.R. `lower`/`upper` name the band
+# columns so the 95% and 50% versions share one function.
+cum_error_plot <- function(
+  error,
+  lower = "q05_cum_error",
+  upper = "q95_cum_error",
+  band = threshold_elev,
+  scale = cfs_hours_per_foot
+) {
+  ggplot(error, aes(x = horizon_hour, color = source, fill = source)) +
+    geom_hline(
+      yintercept = c(-band, band),
+      linetype = "dashed",
+      color = "grey35",
+      linewidth = 0.4
     ) +
-    coord_cartesian(ylim = c(-threshold * 1.2, threshold * 1.2)) +
-    facet_grid(source ~ location) +
-    theme_bw() +
-    theme(
-      legend.position = "top",
-      panel.grid.minor = element_blank()
+    # Outline each band and drop the fill to 10%. The outline is what makes the
+    # bands readable where they overlap: three faint fills with no edge blend
+    # into intermediate colors that are in no legend entry.
+    geom_ribbon(
+      aes(
+        ymin = !!as.name(lower) / scale,
+        ymax = !!as.name(upper) / scale,
+        linetype = source
+      ),
+      alpha = 0.10,
+      linewidth = 0.45
     ) +
+    geom_line(aes(y = q50_cum_error / scale), linewidth = 0.9) +
+    facet_wrap(vars(location), nrow = 1) +
+    scale_source(fill = TRUE) +
+    scale_x_continuous(
+      breaks = seq(8, max_horizon_hour, 8),
+      limits = c(1, max_horizon_hour),
+      expand = expansion(mult = 0.02)
+    ) +
+    theme_paper() +
     labs(
-      x = "Lead Time (days)",
-      y = "Cumulative Error (ft)"
+      x = "Hours into forecast horizon",
+      y = "Cumulative forebay error (ft)"
     )
+}
+
+cum_error_plot50 <- function(error) {
+  cum_error_plot(error, lower = "q25_cum_error", upper = "q75_cum_error")
 }
 ```
 
 #### Overall
-```{r, fig.height=8}
+```{r, fig.height=4.6}
 cum_error |>
   cum_error_plot()
 ```
 
 
 #### Winter
-```{r, fig.height=8}
+```{r, fig.height=4.6}
 cum_error_seasonal |>
   filter(season == "winter") |>
   cum_error_plot()
 ```
 
 #### Spring
-```{r, fig.height=8}
+```{r, fig.height=4.6}
 cum_error_seasonal |>
   filter(season == "spring") |>
   cum_error_plot()
 ```
 
 #### Summer
-```{r, fig.height=8}
+```{r, fig.height=4.6}
 cum_error_seasonal |>
   filter(season == "summer") |>
   cum_error_plot()
 ```
 
 #### Fall
-```{r, fig.height=8}
+```{r, fig.height=4.6}
 cum_error_seasonal |>
   filter(season == "fall") |>
   cum_error_plot()
 ```
 
 ### 25th to 75th percentile (Middle 50%) {.tabset}
-```{r}
-cum_error_plot50 <- function(error, threshold = threshold_elev, scale = 30000) {
-  ggplot(error) +
-    geom_hline(yintercept = c(-threshold, threshold), linetype = "dashed") +
-    geom_errorbar(aes(
-      lead_time / 24,
-      y = q50_cum_error / scale,
-      ymin = q25_cum_error / scale,
-      ymax = q75_cum_error / scale,
-      color = source
-    )) +
-    geom_point(aes(lead_time / 24, y = q50_cum_error / scale, color = source)) +
-    scale_color_manual("Forecast Source", values = cols) +
-    scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
-    scale_y_continuous(
-      breaks = seq(-threshold * 1.2, threshold * 1.2, len = 7)
-    ) +
-    coord_cartesian(ylim = c(-threshold * 1.2, threshold * 1.2)) +
-    facet_grid(source ~ location) +
-    theme_bw() +
-    theme(
-      legend.position = "top",
-      panel.grid.minor = element_blank()
-    ) +
-    labs(
-      x = "Lead Time (days)",
-      y = "Cumulative Error (ft)"
-    )
-}
-```
+
+The same plot over the interquartile range instead of the middle 95%.
 
 #### Overall
-```{r, fig.height=8}
+```{r, fig.height=4.6}
 cum_error |>
   cum_error_plot50()
 ```
 
 
 #### Winter
-```{r, fig.height=8}
+```{r, fig.height=4.6}
 cum_error_seasonal |>
   filter(season == "winter") |>
   cum_error_plot50()
 ```
 
 #### Spring
-```{r, fig.height=8}
+```{r, fig.height=4.6}
 cum_error_seasonal |>
   filter(season == "spring") |>
   cum_error_plot50()
 ```
 
 #### Summer
-```{r, fig.height=8}
+```{r, fig.height=4.6}
 cum_error_seasonal |>
   filter(season == "summer") |>
   cum_error_plot50()
 ```
 
 #### Fall
-```{r, fig.height=8}
+```{r, fig.height=4.6}
 cum_error_seasonal |>
   filter(season == "fall") |>
   cum_error_plot50()
 ```
 
-```{r}
-### 25th to 75th percentile (Middle 50%)
-# ggplot(cum_error) +
-#   geom_hline(yintercept = c(-threshold, threshold), linetype = "dashed") +
-#   # geom_hline(yintercept = c(threshold, -2*threshold), linetype = "dashed", color = "red") +
-#   geom_errorbar(aes(lead_time / 24, y = q50_cum_error, ymin = q25_cum_error, ymax = q75_cum_error, color = source)) +
-#   geom_point(aes(lead_time / 24, y = q50_cum_error, color = source)) +
-#   scale_color_manual("Forecast Source", values = cols) +
-#   scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
-#   coord_cartesian(ylim = c(-threshold, threshold)) +
-#   facet_grid(source ~ location) +
-#   theme_bw() +
-#   theme(legend.position = "top") +
-#   labs(
-#     x = "Lead Time (days)",
-#     y = "Cumulative Error (cfs)"
-#   )
-```
-
 ## Probability of exceeding 0.5 ft cumulative error {.tabset}
+
+Paper Figure 6 is the "Overall" tab, restricted to the marked hours.
+
 ```{r}
+# Mirrors figure_6 in make-revision-figures.R. The paper plots the four marker
+# hours only; the dashboard keeps the whole curve and marks those hours.
+report_hours <- c(8, 16, 24, 32)
+
 prob_bust_plot <- function(error) {
-  ggplot(error) +
-    geom_line(aes(lead_time / 24, y = p_bust, color = source), size = 1) +
-    scale_color_manual("Forecast Source", values = cols) +
-    scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
-    scale_y_continuous(labels = scales::label_percent()) +
-    facet_grid(~location) +
-    theme_bw() +
-    theme(legend.position = "top") +
+  ggplot(error, aes(x = horizon_hour, y = p_bust, color = source)) +
+    geom_line(aes(linetype = source), linewidth = 0.9) +
+    geom_point(
+      data = function(d) filter(d, horizon_hour %in% report_hours),
+      aes(shape = source),
+      size = 2.4
+    ) +
+    facet_wrap(vars(location), nrow = 1) +
+    scale_source(shape = TRUE) +
+    scale_x_continuous(
+      breaks = report_hours,
+      limits = c(1, max_horizon_hour),
+      expand = expansion(mult = 0.04)
+    ) +
+    scale_y_continuous(labels = scales::label_percent(), limits = c(0, 1)) +
+    theme_paper() +
     labs(
-      x = "Lead Time (days)",
-      y = "Exceedance probability"
+      x = "Hours into forecast horizon",
+      y = "Probability outside forebay band"
     )
 }
 ```
@@ -1166,144 +1177,4 @@ cum_error_seasonal |>
 cum_error_seasonal |>
   filter(season == "fall") |>
   prob_bust_plot()
-```
-
-
-```{r}
-## Space remaining until upper threshold {.tabset}
-### 2.5th to 97.5th percentile (Middle 95%)
-# ggplot(cum_error |> filter(lead_time > 1)) +
-#   geom_hline(yintercept = c(-threshold_elev, threshold_elev), linetype = "dashed") +
-#   geom_errorbar(aes(lead_time / 24,
-#     y = dist_to_upper_thresh_q50,
-#     ymin = dist_to_upper_thresh_q05,
-#     ymax = dist_to_upper_thresh_q95, color = source
-#   )) +
-#   # geom_line(aes(lead_time / 24, y = dist_to_nearest_thresh_q50, color = source)) +
-#   geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q50, color = source)) +
-#   # geom_line(aes(lead_time / 24, y = dist_to_lower_thresh_q50, color = source)) +
-#   # geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q50, color = source)) +
-#   # geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q75, color = source)) +
-#   # geom_point(aes(lead_time / 24, y = dist_to_nearest_thresh_q25, color = source)) +
-#   # geom_point(aes(lead_time / 24, y = dist_to_nearest_thresh_q75, color = source)) +
-#   scale_color_manual("Forecast Source", values = cols) +
-#   scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
-#   coord_cartesian(ylim = c(-threshold_elev, threshold_elev)) +
-#   scale_y_continuous(
-#     # limits = c(-threshold_elev, threshold_elev),
-#     breaks = seq(-threshold_elev, threshold_elev, by = 0.1),
-#     minor_breaks = NULL
-#   ) +
-#   facet_grid(source ~ location) +
-#   theme_bw() +
-#   theme(legend.position = "top") +
-#   labs(
-#     x = "Lead Time (days)",
-#     y = "Cumulative Error (feet)"
-#   )
-```
-
-```{r}
-### 25th to 75th percentile (Middle 50%)
-# ggplot(cum_error |> filter(lead_time > 1)) +
-#   geom_hline(yintercept = c(-threshold_elev, threshold_elev), linetype = "dashed") +
-#   geom_errorbar(aes(lead_time / 24,
-#     y = dist_to_upper_thresh_q50,
-#     ymin = dist_to_upper_thresh_q25,
-#     ymax = dist_to_upper_thresh_q75,
-#     color = source
-#   )) +
-#   # geom_line(aes(lead_time / 24, y = dist_to_nearest_thresh_q50, color = source)) +
-#   geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q50, color = source)) +
-#   # geom_line(aes(lead_time / 24, y = dist_to_lower_thresh_q50, color = source)) +
-#   # geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q50, color = source)) +
-#   # geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q75, color = source)) +
-#   # geom_point(aes(lead_time / 24, y = dist_to_nearest_thresh_q25, color = source)) +
-#   # geom_point(aes(lead_time / 24, y = dist_to_nearest_thresh_q75, color = source)) +
-#   scale_color_manual("Forecast Source", values = cols) +
-#   scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
-#   scale_y_continuous(
-#     limits = c(-threshold_elev, threshold_elev),
-#     breaks = seq(-threshold_elev, threshold_elev, by = 0.1),
-#     minor_breaks = NULL
-#   ) +
-#   # coord_cartesian(ylim = c(-6000, 6000)) +
-#   facet_grid(source ~ location) +
-#   theme_bw() +
-#   theme(legend.position = "top") +
-#   labs(
-#     x = "Lead Time (days)",
-#     y = "Cumulative Error (feet)"
-# )
-```
-
-
-
-```{r}
-## Space remaining until lower threshold {.tabset}
-### 2.5th to 97.5th percentile (Middle 95%)
-# ggplot(cum_error |> filter(lead_time > 1)) +
-#   geom_hline(yintercept = c(-threshold_elev, threshold_elev), linetype = "dashed") +
-#   geom_errorbar(aes(lead_time / 24,
-#     y = dist_to_lower_thresh_q50,
-#     ymin = dist_to_lower_thresh_q05,
-#     ymax = dist_to_lower_thresh_q95, color = source
-#   )) +
-#   # geom_line(aes(lead_time / 24, y = dist_to_nearest_thresh_q50, color = source)) +
-#   geom_point(aes(lead_time / 24, y = dist_to_lower_thresh_q50, color = source)) +
-#   # geom_line(aes(lead_time / 24, y = dist_to_lower_thresh_q50, color = source)) +
-#   # geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q50, color = source)) +
-#   # geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q75, color = source)) +
-#   # geom_point(aes(lead_time / 24, y = dist_to_nearest_thresh_q25, color = source)) +
-#   # geom_point(aes(lead_time / 24, y = dist_to_nearest_thresh_q75, color = source)) +
-#   scale_color_manual("Forecast Source", values = cols) +
-#   scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
-#   coord_cartesian(ylim = c(-threshold_elev, threshold_elev)) +
-#   scale_y_continuous(
-#     # limits = c(-threshold_elev, threshold_elev),
-#     breaks = seq(-threshold_elev, threshold_elev, by = 0.1),
-#     minor_breaks = NULL
-#   ) +
-#   facet_grid(source ~ location) +
-#   theme_bw() +
-#   theme(legend.position = "top") +
-#   labs(
-#     x = "Lead Time (days)",
-#     y = "Cumulative Error (cfs)"
-#   )
-```
-
-
-```{r}
-### 25th to 75th percentile (Middle 50%)
-# ggplot(cum_error |> filter(lead_time > 1)) +
-#   geom_hline(yintercept = c(-threshold_elev, threshold_elev), linetype = "dashed") +
-#   geom_errorbar(aes(lead_time / 24,
-#     y = dist_to_lower_thresh_q50,
-#     ymin = dist_to_lower_thresh_q25,
-#     ymax = dist_to_lower_thresh_q75,
-#     color = source
-#   )) +
-#   # geom_line(aes(lead_time / 24, y = dist_to_nearest_thresh_q50, color = source)) +
-#   geom_point(aes(lead_time / 24, y = dist_to_lower_thresh_q50, color = source)) +
-#   # geom_line(aes(lead_time / 24, y = dist_to_lower_thresh_q50, color = source)) +
-#   # geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q50, color = source)) +
-#   # geom_point(aes(lead_time / 24, y = dist_to_upper_thresh_q75, color = source)) +
-#   # geom_point(aes(lead_time / 24, y = dist_to_nearest_thresh_q25, color = source)) +
-#   # geom_point(aes(lead_time / 24, y = dist_to_nearest_thresh_q75, color = source)) +
-#   scale_color_manual("Forecast Source", values = cols) +
-#   scale_x_continuous(limits = c(0, 3), breaks = 0:10, minor_breaks = NULL) +
-#   coord_cartesian(ylim = c(-threshold_elev, threshold_elev)) +
-#   scale_y_continuous(
-#     # limits = c(-threshold_elev, threshold_elev),
-#     breaks = seq(-threshold_elev, threshold_elev, by = 0.1),
-#     minor_breaks = NULL
-#   ) +
-#   facet_grid(source ~ location) +
-#   theme_bw() +
-#   theme(legend.position = "top") +
-#   labs(
-#     x = "Lead Time (days)",
-#     y = "Cumulative Error (cfs)"
-#   )
 ```

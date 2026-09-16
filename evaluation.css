@@ -1,0 +1,32 @@
+/* Wider content column than rmarkdown's Bootstrap default (1200 px). Every
+   figure in this dashboard is a three- or five-panel facet row, which the
+   default width squeezes to the point that axis labels collide.
+
+   `!important` is needed because rmarkdown's html_document template emits its
+   own `.main-container { max-width: 1200px }` after this file, at equal
+   specificity. */
+.main-container {
+  max-width: 1750px !important;
+}
+
+/* The floating table of contents does not need a full quarter of that width.
+   Reclaiming a chunk of it for the figures is the point of widening the page.
+   Scoped to the two-column breakpoint so the stacked mobile layout is
+   untouched. */
+@media (min-width: 992px) {
+  .col-md-3 {
+    width: 16%;
+  }
+
+  .toc-content.col-md-9 {
+    width: 84%;
+  }
+}
+
+/* Figures are drawn at fig.width = 12 in and scaled down to the column, so they
+   stay sharp on high-DPI screens and never upscale past their natural size. */
+.figure img,
+p > img {
+  max-width: 100%;
+  height: auto;
+}
