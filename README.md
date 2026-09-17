@@ -9,7 +9,7 @@ A collection of scripts designed to evaluate real-time reservoir inflow forecast
    * [render-evaluation.R](./render-evaluation.R): render the dashboard, in both the all-conditions and low-flow variants
    * [evaluation.css](./evaluation.css): page width and layout for the dashboard
    * [verify-all.R](./verify-all.R): reproduce the quantitative results reported in the paper, including Table 1, the smoothing sensitivity analysis, and the cumulative forebay exceedance probabilities
-   * [make-metric-figures.R](./make-metric-figures.R): regenerate the lead-time and by-month performance figures (Figures 3 and 4) from the published data
+   * [make-metric-figures.R](./make-metric-figures.R): regenerate the lead-time and by-month performance figures (Figures 2 and 4) from the published data
    * [make-revision-figures.R](./make-revision-figures.R): regenerate the cumulative forebay error and exceedance figures (Figures 5 and 6) from the published data
    * [figure-style.R](./figure-style.R): palette, linetypes, and theme shared by the dashboard and the two figure scripts, so the manuscript figures and the dashboard cannot drift apart
    * [exploratory-plots.R](./exploratory-plots.R): (optional) plot process observations compared to a series of inflow forecasts, outputting to ./plot/exploratory/
@@ -20,7 +20,7 @@ A collection of scripts designed to evaluate real-time reservoir inflow forecast
    1. Download anonymized and processed data from [Zenodo](https://zenodo.org/records/16921728) in [./processed-data](./processed-data/)
    2. Run `Rscript render-evaluation.R` to evaluate inflow forecasts and generate the dashboards
    3. Run `verify-all.R` to reproduce the numbers reported in the paper
-   4. Run `make-metric-figures.R` and `make-revision-figures.R` to regenerate Figures 3--6
+   4. Run `make-metric-figures.R` and `make-revision-figures.R` to regenerate Figures 2, 4, 5, and 6
 
 `render-evaluation.R` produces two self-contained reports from the one `evaluation.Rmd`,
 which differ only in the `flow_caps` parameter:
@@ -71,6 +71,12 @@ A preprint is available at <https://eartharxiv.org/repository/view/10530/>.
 ---
 
 ## Funding Acknowledgements
-This work was supported by under ... <br>
+This work was supported by the U.S. Department of Energy, Hydropower and Hydrokinetic Office Technical Assistance Program. <br>
 The PNNL is a multi-program national laboratory operated by Battelle Memorial Institute for the U.S. Department of Energy (DOE) under Contract No. DE-AC05-76RL01830.
+
+---
+
+## License
+
+BSD 2-Clause. See [LICENSE](./LICENSE).
 

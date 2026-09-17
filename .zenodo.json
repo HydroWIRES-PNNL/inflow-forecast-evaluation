@@ -1,0 +1,48 @@
+{
+    "title": "inflow-forecast-evaluation: real-time reservoir inflow forecast evaluation for the Great River Hydro system",
+    "description": "Code accompanying Bracken et al., \"A real-time reservoir inflow forecast evaluation framework\" (Journal of the American Water Resources Association). Reads the anonymized forecast archive and processed reference inflows for three Great River Hydro dams on the Connecticut River, computes traditional and operator-tailored evaluation metrics, reproduces the metrics and figures reported in the paper, and renders an interactive HTML evaluation dashboard. The two commercial forecast products are anonymized as A and B; the in-house forecast is labelled GRH. Input data are archived separately at doi:10.5281/zenodo.16921728.",
+    "version": "1.0.0",
+    "upload_type": "software",
+    "access_right": "open",
+    "license": "bsd-2-clause",
+    "language": "eng",
+    "creators": [
+        {
+            "name": "Bracken, Cameron",
+            "affiliation": "Pacific Northwest National Laboratory",
+            "orcid": "0000-0003-1917-402X"
+        },
+        {
+            "name": "Son, Youngjun",
+            "affiliation": "Pacific Northwest National Laboratory"
+        },
+        {
+            "name": "Tidwell, Vince",
+            "affiliation": "Pacific Northwest National Laboratory"
+        },
+        {
+            "name": "Voisin, Nathalie",
+            "affiliation": "Pacific Northwest National Laboratory"
+        }
+    ],
+    "related_identifiers": [
+        {
+            "identifier": "https://doi.org/10.31223/X5KR08",
+            "relation": "isSupplementTo",
+            "resource_type": "publication-preprint"
+        },
+        {
+            "identifier": "https://doi.org/10.5281/zenodo.16921728",
+            "relation": "isSupplementedBy",
+            "resource_type": "dataset"
+        }
+    ],
+    "keywords": [
+        "hydropower",
+        "streamflow forecasting",
+        "forecast verification",
+        "reservoir operations",
+        "real-time evaluation",
+        "R"
+    ]
+}
