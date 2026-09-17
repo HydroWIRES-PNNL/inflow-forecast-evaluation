@@ -1,5 +1,7 @@
 # Inflow Forecast Evaluation
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22806456.svg)](https://doi.org/10.5281/zenodo.22806456)
+
 A collection of scripts designed to evaluate real-time reservoir inflow forecast products for the Great River Hydro (GRH) facilities, as well as to visualize evaluation metrics in an HTML dashboard where users can dynamically switch their statistics based on seasonality or applied criteria. The dataset required to run the scripts is available at the following link: [http://zenodo.org/record/16921728](https://zenodo.org/records/16921728) (DOI: 10.5281/zenodo.16921728)
 
 ---
